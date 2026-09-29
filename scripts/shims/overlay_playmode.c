@@ -29,7 +29,18 @@
 #include <unistd.h>
 
 #ifndef SYS_mmap2
-#define SYS_mmap2 __NR_mmap2
+# ifdef __NR_mmap2
+#  define SYS_mmap2 __NR_mmap2
+# else
+/* ARM EABI mmap2. The Mac editor has no Linux syscall table; the device
+ * build defines SYS_mmap2 from its own headers and never uses this. */
+#  define SYS_mmap2 192
+# endif
+#endif
+
+#ifdef __APPLE__
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+#pragma clang diagnostic ignored "-Wint-to-pointer-cast"
 #endif
 
 /* rbp-audio, not PIE. UiSetUtilAutoPlayMode / UiGetUtilAutoPlayMode. */

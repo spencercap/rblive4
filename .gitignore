@@ -38,6 +38,11 @@ target/
 /work/*
 !/work/README.md
 
+# ARM Linux headers copied from the build image so the editor can see
+# SYS_mmap2 and the rest of the target libc. Not part of the port.
+/.editor-sysroot/
+/compile_commands.json
+
 # --- OS / editor junk ------------------------------------------------------
 .DS_Store
 Thumbs.db
