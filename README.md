@@ -1,4 +1,10 @@
-# rblive4
+# rblive4 (spencercap's fork)
+
+see [CHANGELOG.md](https://github.com/spencercap/rblive4/blob/main/CHANGELOG.md) for how this is different from the OG. 
+- there's a new MOD overlay panel which is helpful for changing things previously unavailable
+- <img src="https://github.com/spencercap/rblive4/raw/main/docs/mod-menu.png" alt="" width="240"/>
+
+---
 
 [![Instagram: @i.erhan.es](https://img.shields.io/badge/Instagram-%40i.erhan.es-E4405F?logo=instagram&logoColor=white)](https://instagram.com/i.erhan.es)
 
