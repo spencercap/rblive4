@@ -502,13 +502,14 @@ static volatile int fx_encoder_mode = FX_ENC_BEAT;
 static volatile int fx_time_btn;
 static volatile int fx_time_rotated;
 
-/* Holding the FX SELECT encoder returns Beat FX BPM to AUTO/quantize after
- * manual BPM adjustment. */
+/* FX SELECT push: a short tap is rbp's Beat FX TAP key. Holding it returns
+ * Beat FX BPM to AUTO/quantize after manual BPM adjustment. */
 #define FX_SELECT_HOLD_MS 600
 static volatile int fx_select_held;
 static volatile int fx_select_hold_fired;
 static volatile int fx_select_release_fire;
 static unsigned long long fx_select_press_ms;
+static void fx_bpm_tap(void);
 
 /* "loop-in armed" latch per deck (0 = deck 1), driven by the LOOP IN/OUT keys;
  * the LED bridge turns it into the SC Live 4 blink pattern. */
@@ -769,6 +770,8 @@ static void handle_note(int ch, int note, int on)
                if (fx_select_held && !fx_select_hold_fired &&
                    now_ms() - fx_select_press_ms >= FX_SELECT_HOLD_MS)
                     fx_select_release_fire = 1;
+               else if (!fx_select_hold_fired)
+                    fx_bpm_tap();
                fx_select_held = 0;
           }
           return;
@@ -1103,6 +1106,7 @@ static void handle_pitch(int ch, int cc, int val)
 #define ADDR_GET_BFX_CH    0x4d3bc
 #define ADDR_SET_BPM_MODE  0x4e284
 #define ADDR_GET_BPM_MODE  0x4e28c
+#define ADDR_TRIGGER_TAP   0x4e298
 #define ADDR_ADJUST_BPM    0x4e2a8
 #define ADDR_GET_BPM       0x4e2b0
 #define ADDR_NOTIFY_BPM    0x4d90c
@@ -1303,6 +1307,25 @@ static void handle_fx_time(int val)
      send_rx_key_fl(K_TIME, OP_ROTATE, CH_GLOBAL, d, 0.0f, d);
      if (verbose)
           klog("knobshim2: fx time step %d\n", d);
+}
+
+/* The RX3 TAP key's press edge forces AUTO, so a synthesized key cannot tap
+ * without also leaving manual mode. Call the same engine entry onEv_Tap uses
+ * once manual/TAP mode is active. */
+static void fx_bpm_tap(void)
+{
+     void *dj = *(void **)DJENGINEIF_GLOBAL;
+     int bpm;
+     if (!dj)
+          return;
+     if (((int (*)(void *))ADDR_GET_BPM_MODE)(dj) != 1)
+          ((int (*)(void *, int))ADDR_SET_BPM_MODE)(dj, 1);
+     ((void (*)(void *))ADDR_TRIGGER_TAP)(dj);
+     ((void (*)(void *, int))ADDR_NOTIFY_BPM)(dj, 1);
+     bpm = ((int (*)(void *))ADDR_GET_BPM)(dj);
+     if (verbose)
+          klog("knobshim2: FX SELECT tap -> BPM %d (mode=%d)\n", bpm,
+               ((int (*)(void *))ADDR_GET_BPM_MODE)(dj));
 }
 
 static int set_fx_bpm_auto(void *dj)

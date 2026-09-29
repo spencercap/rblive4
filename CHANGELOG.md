@@ -32,8 +32,8 @@ Slot 2 uses `/media/usb4/sda1` because that is the player's USB 2 mass-storage p
 The FX assign knob drives both the on-screen channel (`K_BFXCH`) and
 `DjEngineIF::setBeatEffectSelectChannel`, so Ch1 / Ch2 / Main actually change
 the audio route. A short push of TIME cycles **BEAT → TIME → BPM** (default
-BEAT). Hold TIME and turn still sends BEAT `<` / `>`. Hold FX SELECT (~600 ms)
-returns Beat FX BPM to AUTO/quantize, restoring live pitch-adjusted BPM and
+BEAT). Hold TIME and turn still sends BEAT `<` / `>`. A short tap of FX SELECT calls `DjEngineIF::triggerTapTiming()`. Hold FX SELECT
+(~600 ms) returns Beat FX BPM to AUTO/quantize, restoring live pitch-adjusted BPM and
 the on-screen QUANTIZE state. A qualifying release also fires the action,
 avoiding a race at the hold threshold. MAIN falls back to the sync-master
 deck's analyzed BPM plus live tempo offset when the missing RX3 mixer hardware
