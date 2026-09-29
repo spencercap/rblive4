@@ -1,8 +1,10 @@
 # rblive4 (spencercap's fork)
 
-see [CHANGELOG.md](https://github.com/spencercap/rblive4/blob/main/CHANGELOG.md) for how this is different from the OG. 
-- there's a new MOD overlay panel which is helpful for changing things previously unavailable
-- <img src="docs/rkb-scl4.png" alt="" width="720"/>
+see [CHANGELOG.md](https://github.com/spencercap/rblive4/blob/main/CHANGELOG.md) for how this is different from the [erhan's source](https://github.com/erhan-/rblive4). but briefly:
+- ✅ BeatFX + knobs work 
+- ✅ Loop encoders work
+- 👾 added new MOD overlay panel for changing things previously unavailable (quantize on/off, safe eject USBs, etc)
+<img src="docs/rkb-scl4.png" alt="" width="720"/>
 
 ---
 
