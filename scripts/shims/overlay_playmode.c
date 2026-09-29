@@ -4,7 +4,7 @@
  * and steals taps before they reach rbp. A MOD tab at the top center of
  * the upright UI opens a panel. Each row names the setting on the left,
  * then the value: MODE (SINGLE, CONTINUE, REPEAT, ALL REPEAT), JOG
- * (− percent +), WAVE (BLUE, RGB, 3BAND), EJECT, and POWER.
+ * (− percent +), WAVE (BLUE, RGB, 3BAND), QUANT (ON, OFF), EJECT, and POWER.
  * The MODE button cycles those four play modes. EJECT asks usb-watch to
  * release the stick; the button then reads PULL until the stick is removed.
  * Play mode is UiSetUtilAutoPlayMode, the same call the RX3 utility menu
@@ -51,6 +51,10 @@
 #define UI_SET_WAVE ((void (*)(int, int, int, int))0x00185c78)
 #define UI_GET_WAVE ((int (*)(int, int))0x00185b14)
 #define UI_CHK_WAVE ((int (*)(int, int))0x00185ba4)
+/* UiSetQuantizeOnOff(deck, on) / UiGetPlayQuantizeOn(deck). Deck is 0 or 1.
+ * This is the QUANT button, not the quantize-beat-value setting. */
+#define UI_SET_QUANTIZE ((void (*)(int, int))0x000fe184)
+#define UI_GET_QUANTIZE ((int (*)(int))0x000fd36c)
 #define CMN_BASE ((volatile unsigned char *)0x03253564)
 /* SetPlayInfo passes this per-deck pair (device, kind) into WaveDispColor. */
 #define DECK_WAVE ((volatile unsigned char *)0x0216b3c0)
@@ -71,9 +75,9 @@
 #define TAB_X ((1280 - TAB_W) / 2)
 #define TAB_Y 8
 
-/* Name on the left, value on the right. Five rows under the MOD tab. */
+/* Name on the left, value on the right. Six rows under the MOD tab. */
 #define PAN_W 340
-#define PAN_H 232
+#define PAN_H 276
 #define PAN_X ((1280 - PAN_W) / 2)
 #define PAN_Y 48
 
@@ -97,12 +101,17 @@
 #define WAVE_X VAL_X
 #define WAVE_W VAL_W
 #define WAVE_BTN ((WAVE_W - 2 * WAVE_GAP) / 3)
-#define USB_Y  ROW_Y(3)
+#define QUANT_Y ROW_Y(3)
+#define QUANT_GAP 8
+#define QUANT_HALF ((VAL_W - QUANT_GAP) / 2)
+#define QUANT_ON_X VAL_X
+#define QUANT_OFF_X (VAL_X + QUANT_HALF + QUANT_GAP)
+#define USB_Y  ROW_Y(4)
 #define USB_GAP 8
 #define USB_HALF ((VAL_W - USB_GAP) / 2)
 #define USB_L_X VAL_X
 #define USB_R_X (VAL_X + USB_HALF + USB_GAP)
-#define PWR_Y  ROW_Y(4)
+#define PWR_Y  ROW_Y(5)
 
 #define COL_TAB    0xff1c2128u
 #define COL_PANEL  0xff121418u
@@ -123,6 +132,11 @@ static int          ov_seen_seq;
 static volatile int ov_wave_seq;
 static volatile int ov_wave_color;
 static int          ov_wave_seen;
+static volatile int ov_quant_seq;
+static volatile int ov_quant_on;
+static int          ov_quant_seen;
+static int          ov_quant_known;
+static int          ov_quant[2];
 static int          ov_wave_cur;
 static int          ov_grab;          /* finger went down on the overlay */
 
@@ -596,6 +610,44 @@ static int read_wave(void)
     return 1;
 }
 
+static void refresh_quant(void)
+{
+    int deck;
+    if (ov_quant_known)
+        return;
+    for (deck = 0; deck < 2; deck++)
+        ov_quant[deck] = UI_GET_QUANTIZE(deck) ? 1 : 0;
+    ov_quant_known = 1;
+}
+
+static void apply_quant(void)
+{
+    int seq = ov_quant_seq;
+    int on, deck;
+    if (seq == ov_quant_seen)
+        return;
+    __sync_synchronize();
+    on = ov_quant_on ? 1 : 0;
+    ov_quant_seen = seq;
+    for (deck = 0; deck < 2; deck++)
+        UI_SET_QUANTIZE(deck, on);
+    ov_quant[0] = on;
+    ov_quant[1] = on;
+    ov_quant_known = 1;
+    olog(on ? "overlay: quantize ON\n" : "overlay: quantize OFF\n");
+}
+
+static void request_quant(int on)
+{
+    on = on ? 1 : 0;
+    ov_quant[0] = on;
+    ov_quant[1] = on;
+    ov_quant_known = 1;
+    ov_quant_on = on;
+    __sync_synchronize();
+    ov_quant_seq++;
+}
+
 static void request_wave(int color)
 {
     ov_wave_color = color;
@@ -703,9 +755,11 @@ void overlay_paint(int fb_fd, unsigned yoffset)
 
     apply_pending();
     apply_wave();
+    apply_quant();
     open = ov_is_open();
     if (open) {
         refresh_mode();
+        refresh_quant();
         if (!ov_wave_cur)
             ov_wave_cur = read_wave();
     }
@@ -742,6 +796,7 @@ void overlay_paint(int fb_fd, unsigned yoffset)
     hash = hash_bytes(hash, &mode, sizeof(mode));
     hash = hash_bytes(hash, &jog, sizeof(jog));
     hash = hash_bytes(hash, &ov_wave_cur, sizeof(ov_wave_cur));
+    hash = hash_bytes(hash, ov_quant, sizeof(ov_quant));
     hash = hash_bytes(hash, &eject_arm, sizeof(eject_arm));
     hash = hash_bytes(hash, &pull1, sizeof(pull1));
     hash = hash_bytes(hash, &pull2, sizeof(pull2));
@@ -789,6 +844,14 @@ void overlay_paint(int fb_fd, unsigned yoffset)
         }
     }
 
+    draw_label(base, QUANT_Y, "QUANT");
+    fill_visual(base, QUANT_ON_X, QUANT_Y, QUANT_HALF, ROW_H,
+                (ov_quant[0] && ov_quant[1]) ? COL_ON : COL_BTN);
+    draw_text_centered(base, QUANT_ON_X, QUANT_Y, QUANT_HALF, ROW_H, "ON", COL_TEXT);
+    fill_visual(base, QUANT_OFF_X, QUANT_Y, QUANT_HALF, ROW_H,
+                (!ov_quant[0] && !ov_quant[1]) ? COL_ON : COL_BTN);
+    draw_text_centered(base, QUANT_OFF_X, QUANT_Y, QUANT_HALF, ROW_H, "OFF", COL_TEXT);
+
     draw_label(base, USB_Y, "EJECT");
     fill_visual(base, USB_L_X, USB_Y, USB_HALF, ROW_H,
                 (eject_arm == 1 || pull1) ? COL_ON : COL_BTN);
@@ -823,7 +886,7 @@ int overlay_touch(int down, int was_down, int lx, int ly)
     int vx = 1279 - lx;
     int vy = ly;
     int on_tab, on_panel, on_mode, on_jog_dn, on_jog_up;
-    int on_usb1, on_usb2, on_blue, on_rgb, on_band, on_power;
+    int on_usb1, on_usb2, on_blue, on_rgb, on_band, on_quant_on, on_quant_off, on_power;
     int fresh;
     unsigned long long now;
     static unsigned long long last_ev_ms;
@@ -848,6 +911,8 @@ int overlay_touch(int down, int was_down, int lx, int ly)
         on_blue = in_rect(vx, vy, WAVE_X, WAVE_Y, WAVE_BTN, ROW_H);
         on_rgb = in_rect(vx, vy, WAVE_X + (WAVE_BTN + WAVE_GAP), WAVE_Y, WAVE_BTN, ROW_H);
         on_band = in_rect(vx, vy, WAVE_X + 2 * (WAVE_BTN + WAVE_GAP), WAVE_Y, WAVE_BTN, ROW_H);
+        on_quant_on = in_rect(vx, vy, QUANT_ON_X, QUANT_Y, QUANT_HALF, ROW_H);
+        on_quant_off = in_rect(vx, vy, QUANT_OFF_X, QUANT_Y, QUANT_HALF, ROW_H);
         on_usb1 = in_rect(vx, vy, USB_L_X, USB_Y, USB_HALF, ROW_H);
         on_usb2 = in_rect(vx, vy, USB_R_X, USB_Y, USB_HALF, ROW_H);
         on_power = in_rect(vx, vy, PAN_X + 6, PWR_Y, PAN_W - 12, ROW_H);
@@ -856,6 +921,7 @@ int overlay_touch(int down, int was_down, int lx, int ly)
             if (on_tab) {
                 ov_set_open(1);
                 ov_mode_known = 0;
+                ov_quant_known = 0;
                 ov_wave_cur = 0;
                 eject_arm = 0;
                 power_arm = 0;
@@ -886,6 +952,10 @@ int overlay_touch(int down, int was_down, int lx, int ly)
                 request_wave(3);
             else if (on_band)
                 request_wave(4);
+            else if (on_quant_on)
+                request_quant(1);
+            else if (on_quant_off)
+                request_quant(0);
             else if (on_usb1 && !pull1) {
                 if (eject_arm == 1) {
                     eject_request(1);

@@ -2,7 +2,7 @@
 
 see [CHANGELOG.md](https://github.com/spencercap/rblive4/blob/main/CHANGELOG.md) for how this is different from the OG. 
 - there's a new MOD overlay panel which is helpful for changing things previously unavailable
-- <img src="https://github.com/spencercap/rblive4/raw/main/docs/mod-menu.png" alt="" width="240"/>
+- <img src="docs/rkb-scl4.png" alt="" width="720"/>
 
 ---
 
