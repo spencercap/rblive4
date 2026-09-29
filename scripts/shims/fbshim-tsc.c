@@ -15,6 +15,10 @@
  * Coordinates are translated to the logical 1280x800 space:
  *   raw rx,ry in [0,2048): lx = 1279 - ry*1280/2048, ly = rx*800/2048
  *
+ * PART 3 (overlay): a MOD tab drawn on the rotated frame. Taps on it open a
+ * panel (SINGLE / CONTINUE / jog sensitivity) and are not forwarded to rbp.
+ * See overlay_playmode.c.
+ *
  * Build: arm-linux-gnueabi-gcc -O2 -mfloat-abi=soft -fno-stack-protector
  *   -fPIC -shared -o fbshim.so fbshim-tsc.c -L/tmp/arm213sysroot/usr/lib
  *   -L/tmp/arm213sysroot/lib -lc -lpthread -Wl,--allow-shlib-undefined
@@ -27,6 +31,9 @@
 #include <string.h>
 #include <unistd.h>
 #include <fcntl.h>
+#ifndef O_TMPFILE /* glibc 2.13 headers predate it; kernel value on ARM */
+#define O_TMPFILE (020000000 | O_DIRECTORY)
+#endif
 #include <errno.h>
 #include <pthread.h>
 #include <sys/ioctl.h>
@@ -34,6 +41,7 @@
 #include <sys/time.h>
 #include <stdint.h>
 #include <poll.h>
+#include "overlay_playmode.h"
 
 #ifndef FBIOGET_VSCREENINFO
 #define FBIOGET_VSCREENINFO 0x4600
@@ -206,6 +214,12 @@ static void *reader_thread(void *arg)
                 int lx, ly;
                 transform(rx, ry, &lx, &ly);
                 if (cur_flag != last_flag || lx != last_x || ly != last_y) {
+                    if (overlay_touch(cur_flag, last_flag, lx, ly)) {
+                        last_flag = cur_flag;
+                        last_x = lx;
+                        last_y = ly;
+                        break;
+                    }
                     if (cur_flag && !last_flag) {
                         /* Touch down: send burst of 2 frames so TouchAdValueHysteresis
                          * (which zeros the first frame as debounce) transitions 0->1->2 immediately */
@@ -419,6 +433,12 @@ int ioctl(int fd, unsigned long request, ...)
     case FBIOPUT_VSCREENINFO:
         return 0;
     case FBIOPAN_DISPLAY: {
+        /* Rotation has already written this buffer. Paint the MODE overlay
+         * before the pan so it is part of the frame about to be shown. */
+        if (arg) {
+            struct fb_var_screeninfo *v = arg;
+            overlay_paint(fd, v->yoffset);
+        }
         /* Lock-free high-precision 60 FPS pacing for DirectFB.
          * Rockchip DRM returns immediately from FBIOPAN_DISPLAY.
          * Pace each flip with nanosecond clock_nanosleep so gui_task renders at 60 FPS

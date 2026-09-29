@@ -47,7 +47,7 @@ sleep 1
 sh /data/usb-watch.sh stop 2>/dev/null
 
 # 8. Start rbp cleanly inside chroot
-nohup chroot /data/rbx3-run env PATH=/bin:/sbin:/usr/bin:/usr/sbin DFB_ROTATE=left STARTUP_MUTE_MS=1500 STARTUP_FADE_MS=300 JOG_VERBOSE=1 TEMPO_VERBOSE=1 LD_PRELOAD=/usr/lib/fbshim.so:/usr/lib/knobshim.so:/usr/lib/audioshim.so /lib/ld-linux.so.3 /root/pdj/rbp -a </dev/null >/data/rbp-p.log 2>&1 &
+nohup chroot /data/rbx3-run env PATH=/bin:/sbin:/usr/bin:/usr/sbin DFB_ROTATE=left BEATLOOP=1 STARTUP_MUTE_MS=1500 STARTUP_FADE_MS=300 JOG_VERBOSE=1 TEMPO_VERBOSE=1 LD_PRELOAD=/usr/lib/fbshim.so:/usr/lib/knobshim.so:/usr/lib/audioshim.so /lib/ld-linux.so.3 /root/pdj/rbp -a </dev/null >/data/rbp-p.log 2>&1 &
 
 echo "launched rbp, waiting for initialization..."
 RBP=""

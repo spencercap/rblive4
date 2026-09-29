@@ -60,6 +60,9 @@
  *   KNOB_SCALE=n    selector ticks per knob step (default 1)
  *   JOG_SCALE=n     jog ticks per 14-bit delta step (default 1)
  *   JOG_PPR=n       jog counts per full revolution (default 128)
+ *   Jog sensitivity is jog_gain_milli in /tmp/rb-overlay (1000 = 1.0),
+ *   written by the MOD panel while rbp is running. It scales both the
+ *   position step and the rev/s sent to the player.
  *   JOG_REV=1       reverse jog direction (default 0)
  *   JOG_IDLE_MS=n   ms of inactivity before a speed-0 jog key is sent
  *                   (default 120)
@@ -90,6 +93,11 @@
 #include <math.h>
 #include <sys/mman.h>
 #include <sound/asequencer.h>
+#include "overlay_playmode.h"
+
+#ifndef SYS_mmap2
+#define SYS_mmap2 __NR_mmap2
+#endif
 
 /* ---- real syscalls (bypass libc interposition) ---- */
 static int real_open(const char *p, int flags)
@@ -416,15 +424,49 @@ struct jog_ctrl {
      unsigned int vpos;  /* continuous virtual jog counter (u16 space) */
      int moving;         /* jog currently moving / nonzero speed sent */
      float speed;        /* last computed speed (rev/s) */
+     float frac;         /* leftover sub-count after the sensitivity scale */
      int sch;
 };
-static struct jog_ctrl jog_state[2] = { {4,0,0,0,0,0,0,0,0,0.0f,1},
-                                        {5,0,0,0,0,0,0,0,0,0.0f,2} };
+static struct jog_ctrl jog_state[2] = { {4,0,0,0,0,0,0,0,0,0.0f,0.0f,1},
+                                        {5,0,0,0,0,0,0,0,0,0.0f,0.0f,2} };
 
 static int jog_ppr = 128;      /* Prime GO counts per revolution (calibrate) */
 static int jog_rev = 0;        /* invert jog direction */
 static int jog_idle_ms = 120;
 static int jog_verbose = 0;
+static struct rb_overlay_shm *jog_ov;
+
+/* MOD panel writes jog_gain_milli. 1000 is the original calibration;
+ * the panel default is JOG_GAIN_DEF (40). */
+static void jog_ov_load(void)
+{
+     int fd;
+     void *p;
+     if (jog_ov)
+          return;
+     fd = syscall(SYS_openat, AT_FDCWD, RB_OVERLAY_SHM, O_RDONLY, 0);
+     if (fd < 0)
+          return;
+     p = (void *)syscall(SYS_mmap2, 0, sizeof(*jog_ov),
+                         PROT_READ, MAP_SHARED, fd, 0);
+     syscall(SYS_close, fd);
+     if (!p || p == (void *)-1)
+          return;
+     jog_ov = p;
+}
+
+static float jog_gain(void)
+{
+     int g;
+     if (!jog_ov)
+          jog_ov_load();
+     if (!jog_ov)
+          return (float)JOG_GAIN_DEF / 1000.0f;
+     g = jog_ov->jog_gain_milli;
+     if (g < JOG_GAIN_MIN || g > JOG_GAIN_MAX)
+          return (float)JOG_GAIN_DEF / 1000.0f;
+     return (float)g / 1000.0f;
+}
 
 /* pitch fader: 14-bit, CC 0x1F (hi) + 0x4B (lo), inverted */
 struct pitch_ctrl {
@@ -877,13 +919,19 @@ static void handle_jog(int ch, int cc, int val)
      if (dt < 0.0005f) dt = 0.0005f;
      if (jog_rev)
           d = -d;
-     int dp = d * jog_scale;               /* scaled pulse delta */
+     /* Sensitivity scales the encoder step. Position keeps the fractional
+      * remainder so 50% does not drop every other tick. Speed uses the
+      * same scale, so nudge and vinyl move together. */
+     float gain = jog_gain();
+     float scaled = (float)d * gain + s->frac;
+     int di = (int)scaled;
+     s->frac = scaled - (float)di;
+     int dp = di * jog_scale;
      if (dp > 4096) dp = 4096;
      if (dp < -4096) dp = -4096;
      /* continuous virtual counter in 16-bit space (wrap 65536) */
      s->vpos = (unsigned int)(s->vpos + (unsigned int)dp) & 0xFFFFu;
-     /* speed in rev/s of the Prime GO jog */
-     float speed = (float)dp / (float)(jog_ppr * jog_scale) / dt;
+     float speed = ((float)d * gain) / (float)jog_ppr / dt;
      if (speed > 8.0f) speed = 8.0f;
      if (speed < -8.0f) speed = -8.0f;
      s->moving = 1;
@@ -1583,6 +1631,9 @@ static void *usb_auto_thread(void *arg)
                continue;
 
           int mounted = access("/media/usb1/sda1/PIONEER/rekordbox/export.pdb", F_OK) == 0;
+          /* Real second stick is mounted at rbp's USB2 path. Only then is
+           * kind 3 legitimate; otherwise it is the phantom that hides USB1. */
+          int usb2 = access("/media/usb4/sda1/PIONEER/rekordbox/export.pdb", F_OK) == 0;
           if (mounted) {
                volatile uint32_t *p_det_usb1 = (volatile uint32_t *)0x03256888;
                volatile uint32_t *p_det_usb2 = (volatile uint32_t *)0x03256944;
@@ -1591,45 +1642,50 @@ static void *usb_auto_thread(void *arg)
                volatile uint32_t *p_dev      = (volatile uint32_t *)0x326f8bc;
                volatile uint32_t *p_refresh  = (volatile uint32_t *)0x326e128;
 
-               /* Suppress phantom USB2 (kind 3) on Prime GO since it has only 1 physical port */
-               if (*p_det_usb2 != 0) {
+               if (!usb2 && *p_det_usb2 != 0) {
                     *p_det_usb2 = 0;
                     *p_refresh = 1;
                }
 
-               /* When USB1 is ready (kind2=2), ensure UI knows media 2 is connected */
-               if (*p_det_usb1 == 2) {
+               /* When only USB1 is ready, keep the UI on that slot. A real
+                * USB2 must be left alone or this overwrites its media bit. */
+               if (!usb2 && *p_det_usb1 == 2) {
                     if (*p_media != 2) {
                          *p_media = 2;
                          *p_refresh = 1;
                     }
-                    /* Ensure browse caution message is cleared so touchscreen is active */
+               }
+               /* Ensure browse caution message is cleared so touchscreen is active */
+               {
                     volatile uint32_t *p_caution = (volatile uint32_t *)0x05a191fc;
-                    if (*p_caution != 0) {
+                    if (*p_caution != 0)
                          *p_caution = 0;
-                    }
                }
 
                if (!last_mounted) {
                     *p_det_usb1 = 2;
-                    *p_det_usb2 = 0;
-                    *p_media = 2;
-                    *p_dev = 3;   /* Device 3 = USB 1 */
+                    if (!usb2) {
+                         *p_det_usb2 = 0;
+                         *p_media = 2;
+                         *p_dev = 3;   /* Device 3 = USB 1 */
+                    }
                     *p_refresh = 1;
                     klog("knobshim2: USB1 detected -> registered (dev=3)\n");
-               } else if (*p_mode == 12 && *p_dev == 0) {
+               } else if (!usb2 && *p_mode == 12 && *p_dev == 0) {
                     /* On Source menu: keep USB1 (device 3) active so the stick label shows */
                     *p_media = 2;
                     *p_dev = 3;
                     *p_refresh = 1;
                }
           } else if (last_mounted) {
-               /* Stick unplugged: clear detect flags */
+               /* USB1 unplugged. Leave USB2 alone when that stick is real. */
                *(volatile uint32_t *)0x03256888 = 0;
-               *(volatile uint32_t *)0x03256944 = 0;
-               *(volatile uint32_t *)0x326f8b4 = 0;
+               if (!usb2) {
+                    *(volatile uint32_t *)0x03256944 = 0;
+                    *(volatile uint32_t *)0x326f8b4 = 0;
+               }
                *(volatile uint32_t *)0x326e128 = 1;
-               klog("knobshim2: USB removed\n");
+               klog("knobshim2: USB1 removed\n");
           }
           last_mounted = mounted;
      }

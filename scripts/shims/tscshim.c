@@ -25,6 +25,9 @@
 #include <string.h>
 #include <unistd.h>
 #include <fcntl.h>
+#ifndef O_TMPFILE /* glibc 2.13 headers predate it; kernel value on ARM */
+#define O_TMPFILE (020000000 | O_DIRECTORY)
+#endif
 #include <errno.h>
 #include <pthread.h>
 #include <sys/ioctl.h>

@@ -42,7 +42,7 @@ all: $(SHARED) $(STATIC)
 
 # knobshim2 needs the ALSA sequencer headers; host headers are fine as the
 # structs are ABI-stable.
-knobshim2.so: knobshim2.c $(COMPAT)/libc_nonshared.a $(COMPAT)/libpthread_nonshared.a
+knobshim2.so: knobshim2.c overlay_playmode.h $(COMPAT)/libc_nonshared.a $(COMPAT)/libpthread_nonshared.a
 	$(CC) $(CFLAGS) -shared -o $@ $< -lpthread -lm -lc $(LDFLAGS)
 
 # audioshim must bind dlopen/dlsym to libdl GLIBC_2.4 (the .symver directives
@@ -50,8 +50,8 @@ knobshim2.so: knobshim2.c $(COMPAT)/libc_nonshared.a $(COMPAT)/libpthread_nonsha
 audioshim.so: audioshim.c
 	$(CC) $(CFLAGS) -shared -o $@ $< $(RX3LIB)/libdl.so.2 -lc $(LDFLAGS)
 
-fbshim-tsc.so: fbshim-tsc.c $(COMPAT)/libc_nonshared.a $(COMPAT)/libpthread_nonshared.a
-	$(CC) $(CFLAGS) -shared -o $@ $< -lpthread -lm -lc $(LDFLAGS)
+fbshim-tsc.so: fbshim-tsc.c overlay_playmode.c overlay_playmode.h $(COMPAT)/libc_nonshared.a $(COMPAT)/libpthread_nonshared.a
+	$(CC) $(CFLAGS) -shared -o $@ fbshim-tsc.c overlay_playmode.c -lpthread -lm -lc $(LDFLAGS)
 
 gpioshim.so: gpioshim.c
 	$(CC) $(CFLAGS) -shared -o $@ $< -lc $(LDFLAGS)
