@@ -6,12 +6,15 @@ Differences from [erhan-/rblive4](https://github.com/erhan-/rblive4), forked at 
 
 ### MOD menu
 
-A **MOD** tab sits at the top center of the screen. Taps on the tab and its panel stay in the overlay and are not passed to the player.
+A **MOD** tab sits at the top center of the screen. Taps on the tab and its panel stay in the overlay and are not passed to the player. The open panel looks like this. Green marks the current play mode and waveform color.
+
+![MOD menu](docs/mod-menu.png)
 
 - **Play mode** is one button. Each tap cycles **SINGLE**, **CONTINUE**, **REPEAT**, and **ALL REPEAT**, using the same `UiSetUtilAutoPlayMode` call as the RX3 utility screen. The choice is written back to `XdjSettings.dat`.
 - **Jog sensitivity** is one setting for both decks. It starts at 40% of the original calibration, steps by 10% between 20% and 200%, and is kept in `/tmp/rb-overlay` until the device reboots.
 - **Waveform color** is **BLUE**, **RGB**, or **3 BAND**, and it recolors the waveform that is already on screen. On this player, tapping the waveform does not open the RX3 shortcut, so the choice is on the MOD panel.
 - **Eject** starts as one full-width button. A tap splits that row into the two USB slots, each labeled with a shortened volume name. Tapping a slot turns that half into **YES**. Only the **YES** tap ejects that stick. Closing the menu returns the row to the single **EJECT** button.
+- **Power** sits under eject. The first tap turns that button into **YES**. The second tap asks the launcher to eject both sticks, then power the unit off. Closing the menu before **YES** cancels it.
 
 ### USB
 
