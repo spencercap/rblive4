@@ -502,11 +502,12 @@ static volatile int fx_encoder_mode = FX_ENC_BEAT;
 static volatile int fx_time_btn;
 static volatile int fx_time_rotated;
 
-/* Holding the FX SELECT encoder returns Beat FX BPM detection to AUTO, which
- * follows rbp's current master/source BPM. */
+/* Holding the FX SELECT encoder returns Beat FX BPM to AUTO/quantize after
+ * manual BPM adjustment. */
 #define FX_SELECT_HOLD_MS 600
 static volatile int fx_select_held;
 static volatile int fx_select_hold_fired;
+static volatile int fx_select_release_fire;
 static unsigned long long fx_select_press_ms;
 
 /* "loop-in armed" latch per deck (0 = deck 1), driven by the LOOP IN/OUT keys;
@@ -759,8 +760,15 @@ static void handle_note(int ch, int note, int on)
           if (on) {
                fx_select_held = 1;
                fx_select_hold_fired = 0;
+               fx_select_release_fire = 0;
                fx_select_press_ms = now_ms();
           } else {
+               /* The 50 Hz hold worker can lose a release that lands just
+                * after the threshold but before its next poll. Preserve that
+                * qualifying release so the worker fires it exactly once. */
+               if (fx_select_held && !fx_select_hold_fired &&
+                   now_ms() - fx_select_press_ms >= FX_SELECT_HOLD_MS)
+                    fx_select_release_fire = 1;
                fx_select_held = 0;
           }
           return;
@@ -1098,6 +1106,88 @@ static void handle_pitch(int ch, int cc, int val)
 #define ADDR_ADJUST_BPM    0x4e2a8
 #define ADDR_GET_BPM       0x4e2b0
 #define ADDR_NOTIFY_BPM    0x4d90c
+#define ADDR_GET_TEMPO_X100 0x45dbc
+#define ADDR_GET_SYNC_MASTER 0x4b450
+#define ADDR_UI_GET_PLAY_ORIGINAL_BPM 0xfd244
+#define ADDR_BPM_MANAGER_GET_BFX_BPM 0x53eb4
+#define MIXER_ENGINE_GLOBAL 0x011493acUL
+#define PROLOGUE_GET_BFX_BPM 0xe5900214u
+
+/*
+ * MAIN's native AUTO path cannot identify an on-air deck on this port because
+ * the RX3 mixer hardware state is absent, so it reports invalid and falls back
+ * to 120 BPM.  Retry that read through the actual sync-master deck while only
+ * temporarily changing the selector field used by BpmManager.  Audio remains
+ * assigned to MAIN; the public selector and its notifications are untouched.
+ */
+static int bfx_bpm_hook(void *dj)
+{
+     void *bpm_mgr;
+     void *mixer;
+     void *beat_fx_mgr;
+     int bpm;
+     int selected;
+     int master;
+     int original;
+     int tempo;
+
+     if (!dj)
+          return 12000;
+     bpm_mgr = *(void **)((char *)dj + 0x214);
+     if (!bpm_mgr)
+          return 12000;
+     bpm = ((int (*)(void *))ADDR_BPM_MANAGER_GET_BFX_BPM)(bpm_mgr);
+     if (*(int *)((char *)bpm_mgr + 0x10) != 0 ||
+         *(unsigned char *)((char *)bpm_mgr + 0x20))
+          return bpm;
+
+     mixer = *(void **)MIXER_ENGINE_GLOBAL;
+     beat_fx_mgr = mixer ? *(void **)((char *)mixer + 0x58) : NULL;
+     if (!beat_fx_mgr)
+          return bpm;
+     selected = *(int *)beat_fx_mgr;
+     master = ((int (*)(void *))ADDR_GET_SYNC_MASTER)(dj);
+     if (selected != BFX_CH_MASTER || master < 0 || master > 1)
+          return bpm;
+
+     *(int *)beat_fx_mgr = master;
+     bpm = ((int (*)(void *))ADDR_BPM_MANAGER_GET_BFX_BPM)(bpm_mgr);
+     *(int *)beat_fx_mgr = selected;
+     if (!*(unsigned char *)((char *)bpm_mgr + 0x20)) {
+          original = ((int (*)(int))ADDR_UI_GET_PLAY_ORIGINAL_BPM)(master);
+          tempo = ((int (*)(void *, int))ADDR_GET_TEMPO_X100)(dj, master);
+          if (original >= 4000 && original != 65535 &&
+              tempo > -10000 && tempo < 10000) {
+               bpm = (int)(((int64_t)original * (10000 + tempo) + 5000) /
+                           10000);
+               if (bpm < 4000)
+                    bpm = 4000;
+               *(int *)((char *)bpm_mgr + 0x1c) = bpm;
+               *(unsigned char *)((char *)bpm_mgr + 0x20) = 1;
+          }
+     }
+     return bpm;
+}
+
+static void install_bfx_bpm_hook(void)
+{
+     uint32_t *p = (uint32_t *)ADDR_GET_BPM;
+     unsigned long pg = (unsigned long)p & ~(unsigned long)(4096 - 1);
+
+     if (*(volatile uint32_t *)p != PROLOGUE_GET_BFX_BPM) {
+          klog("knobshim2: FX BPM hook: unexpected prologue at %p\n", (void *)p);
+          return;
+     }
+     if (mprotect((void *)pg, 4096, PROT_READ | PROT_WRITE | PROT_EXEC) != 0) {
+          klog("knobshim2: FX BPM hook: mprotect failed\n");
+          return;
+     }
+     p[0] = 0xE51FF004u; /* ldr pc,[pc,#-4] */
+     p[1] = (uint32_t)&bfx_bpm_hook;
+     mprotect((void *)pg, 4096, PROT_READ | PROT_EXEC);
+     __builtin___clear_cache((char *)p, (char *)p + 8);
+     klog("knobshim2: FX BPM AUTO master-deck hook installed\n");
+}
 
 /* inverse of the switch table above: internal type -> switch position */
 static const signed char bfx_type_to_pos[15] = {
@@ -1213,6 +1303,20 @@ static void handle_fx_time(int val)
      send_rx_key_fl(K_TIME, OP_ROTATE, CH_GLOBAL, d, 0.0f, d);
      if (verbose)
           klog("knobshim2: fx time step %d\n", d);
+}
+
+static int set_fx_bpm_auto(void *dj)
+{
+     int bpm;
+     if (!dj)
+          return 0;
+     ((int (*)(void *, int))ADDR_SET_BPM_MODE)(dj, 0);
+     /* Force BpmManager to evaluate its AUTO source before refreshing the
+      * visible BPM and quantize-valid state. */
+     (void)((int (*)(void *))ADDR_GET_BPM)(dj);
+     ((void (*)(void *, int))ADDR_NOTIFY_BPM)(dj, 1);
+     bpm = ((int (*)(void *))ADDR_GET_BPM)(dj);
+     return bpm;
 }
 
 /* ---- Beat-loop knob -------------------------------------------------------
@@ -1649,6 +1753,7 @@ static void *midi_thread(void *arg)
           return NULL;
      }
      klog("knobshim2: KeyManager ready, opening sequencer...\n");
+     install_bfx_bpm_hook();
 
      /* Ensure audio routing in djengine::MixerRouteMngr:
       * On real RX3, physical DECK/LINE switches assign input routing.
@@ -2672,20 +2777,18 @@ static void *sync_hold_thread(void *arg)
                               d + 1);
                }
           }
-          if (fx_select_held && !fx_select_hold_fired &&
-              now_ms() - fx_select_press_ms >= FX_SELECT_HOLD_MS) {
+          if ((!fx_select_hold_fired && fx_select_held &&
+               now_ms() - fx_select_press_ms >= FX_SELECT_HOLD_MS) ||
+              fx_select_release_fire) {
                void *dj = *(void **)DJENGINEIF_GLOBAL;
+               int bpm;
+               fx_select_release_fire = 0;
                fx_select_hold_fired = 1;
-               if (dj) {
-                    /* AUTO mode follows rbp's selected/master deck BPM. */
-                    ((int (*)(void *, int))ADDR_SET_BPM_MODE)(dj, 0);
-                    ((void (*)(void *, int))ADDR_NOTIFY_BPM)(dj, 1);
-                    if (verbose)
-                         klog("knobshim2: FX SELECT held -> BPM AUTO "
-                              "(mode=%d bpm=%d)\n",
-                              ((int (*)(void *))ADDR_GET_BPM_MODE)(dj),
-                              ((int (*)(void *))ADDR_GET_BPM)(dj));
-               }
+               bpm = set_fx_bpm_auto(dj);
+               if (verbose)
+                    klog("knobshim2: FX SELECT held -> BPM AUTO %d "
+                         "(mode=%d)\n", bpm,
+                         dj ? ((int (*)(void *))ADDR_GET_BPM_MODE)(dj) : -1);
           }
           usleep(20000);   /* 50 Hz */
      }

@@ -6,15 +6,13 @@ Differences from [erhan-/rblive4](https://github.com/erhan-/rblive4), forked at 
 
 ### MOD menu
 
-A **MOD** tab sits at the top center of the screen. Taps on the tab and its panel stay in the overlay and are not passed to the player. The open panel looks like this. Green marks the current play mode and waveform color.
+A **MOD** tab sits at the top center of the screen. Taps on the tab and its panel stay in the overlay and are not passed to the player. Each row names the setting on the left, then the value. Green marks the current play mode and waveform color.
 
-![MOD menu](docs/mod-menu.png)
-
-- **Play mode** is one button. Each tap cycles **SINGLE**, **CONTINUE**, **REPEAT**, and **ALL REPEAT**, using the same `UiSetUtilAutoPlayMode` call as the RX3 utility screen. The choice is written back to `XdjSettings.dat`.
-- **Jog sensitivity** is one setting for both decks. It starts at 40% of the original calibration, steps by 10% between 20% and 200%, and is kept in `/tmp/rb-overlay` until the device reboots.
-- **Waveform color** is **BLUE**, **RGB**, or **3 BAND**, and it recolors the waveform that is already on screen. On this player, tapping the waveform does not open the RX3 shortcut, so the choice is on the MOD panel.
-- **Eject** starts as one full-width button. A tap splits that row into the two USB slots, each labeled with a shortened volume name. Tapping a slot turns that half into **YES**. Only the **YES** tap ejects that stick. Closing the menu returns the row to the single **EJECT** button.
-- **Power** sits under eject. The first tap turns that button into **YES**. The second tap asks the launcher to eject both sticks, then power the unit off. Closing the menu before **YES** cancels it.
+- **MODE** is the play mode. Each tap cycles **SINGLE**, **CONTINUE**, **REPEAT**, and **ALL REPEAT**, using the same `UiSetUtilAutoPlayMode` call as the RX3 utility screen. The choice is written back to `XdjSettings.dat`.
+- **JOG** is jog sensitivity for both decks, shown as −, the percent, and +. It starts at 40% of the original calibration, steps by 10% between 20% and 200%, and is kept in `/tmp/rb-overlay` until the device reboots.
+- **WAVE** is **BLUE**, **RGB**, or **3 BAND**, and it recolors the waveform that is already on screen. On this player, tapping the waveform does not open the RX3 shortcut, so the choice is on the MOD panel.
+- **EJECT** names the row. The two USB slots are already shown, each labeled with a shortened volume name. Tapping a slot turns that half into **YES**. Only the **YES** tap ejects that stick. Closing the menu clears a pending **YES**.
+- **POWER** sits on the last row. The first tap turns the row green and shows **YES**. The second tap asks the launcher to eject both sticks, then power the unit off. Closing the menu before **YES** cancels it.
 
 ### USB
 
@@ -35,7 +33,11 @@ The FX assign knob drives both the on-screen channel (`K_BFXCH`) and
 `DjEngineIF::setBeatEffectSelectChannel`, so Ch1 / Ch2 / Main actually change
 the audio route. A short push of TIME cycles **BEAT → TIME → BPM** (default
 BEAT). Hold TIME and turn still sends BEAT `<` / `>`. Hold FX SELECT (~600 ms)
-puts Beat FX BPM detect back in AUTO so it follows the master/source deck.
+returns Beat FX BPM to AUTO/quantize, restoring live pitch-adjusted BPM and
+the on-screen QUANTIZE state. A qualifying release also fires the action,
+avoiding a race at the hold threshold. MAIN falls back to the sync-master
+deck's analyzed BPM plus live tempo offset when the missing RX3 mixer hardware
+state prevents rbp's native master-source lookup.
 
 ### Beat loop
 
@@ -51,4 +53,9 @@ logging is off unless `KNOB_VERBOSE`, `JOG_VERBOSE`, or `TEMPO_VERBOSE` is set.
 
 ### Build
 
-`fbshim-tsc.so` is built with `overlay_playmode.c` and paints the MOD panel on each frame. `knobshim2` reads the jog gain from the same `/tmp/rb-overlay` mapping. The shim build defines `O_TMPFILE` because the glibc 2.13 headers predate it.
+`fbshim-tsc.so` is built with `overlay_playmode.c`. The rotated DirectFB path
+normally presents physical framebuffer page 0, so repainting the overlay on
+every flip caused visible partial-panel tearing. The overlay now hashes its
+visible state and repaints each framebuffer page only when that state changes.
+`knobshim2` reads the jog gain from the same `/tmp/rb-overlay` mapping. The
+shim build defines `O_TMPFILE` because the glibc 2.13 headers predate it.

@@ -1,10 +1,11 @@
-/* On-screen PLAY MODE overlay for the SC Live 4 port.
+/* On-screen MOD overlay for the SC Live 4 port.
  *
  * rbp owns the whole rekordbox UI, so this draws after the rotated frame
  * and steals taps before they reach rbp. A MOD tab at the top center of
- * the upright UI opens a panel with play mode, jog sensitivity,
- * EJECT, and waveform color (BLUE, RGB, 3BAND). The play mode button
- * cycles SINGLE, CONTINUE, REPEAT, and ALL REPEAT. EJECT asks usb-watch to
+ * the upright UI opens a panel. Each row names the setting on the left,
+ * then the value: MODE (SINGLE, CONTINUE, REPEAT, ALL REPEAT), JOG
+ * (− percent +), WAVE (BLUE, RGB, 3BAND), EJECT, and POWER.
+ * The MODE button cycles those four play modes. EJECT asks usb-watch to
  * release the stick; the button then reads PULL until the stick is removed.
  * Play mode is UiSetUtilAutoPlayMode, the same call the RX3 utility menu
  * makes. The jog number is a percent of the unscaled wheel. 100 is the
@@ -70,36 +71,38 @@
 #define TAB_X ((1280 - TAB_W) / 2)
 #define TAB_Y 8
 
-#define PAN_W 260
-#define PAN_H 260
+/* Name on the left, value on the right. Five rows under the MOD tab. */
+#define PAN_W 340
+#define PAN_H 232
 #define PAN_X ((1280 - PAN_W) / 2)
 #define PAN_Y 48
 
-#define BTN_X (PAN_X + (PAN_W - BTN_W) / 2)
-#define BTN_W 200
-#define BTN_H 36
-#define BTN1_Y 84
+#define PAD 10
+#define LAB_W 72
+#define ROW_H 36
+#define ROW_GAP 8
+#define LAB_X (PAN_X + PAD)
+#define VAL_X (LAB_X + LAB_W)
+#define VAL_W (PAN_W - PAD - (VAL_X - PAN_X))
+#define ROW_Y(i) (PAN_Y + PAD + (i) * (ROW_H + ROW_GAP))
 
-#define JOG_Y 128
-#define JOG_H 36
+#define MODE_Y ROW_Y(0)
+#define JOG_Y  ROW_Y(1)
 #define STEP_W 44
-#define STEP_DN_X (PAN_X + 10)
-#define STEP_UP_X (PAN_X + PAN_W - 10 - STEP_W)
+#define STEP_DN_X VAL_X
+#define STEP_UP_X (VAL_X + VAL_W - STEP_W)
 
-#define WAVE_Y 172
-#define WAVE_H 36
+#define WAVE_Y ROW_Y(2)
 #define WAVE_GAP 6
-#define WAVE_X (PAN_X + 8)
-#define WAVE_W (PAN_W - 16)
+#define WAVE_X VAL_X
+#define WAVE_W VAL_W
 #define WAVE_BTN ((WAVE_W - 2 * WAVE_GAP) / 3)
-#define USB_Y  216
-#define USB_H  36
+#define USB_Y  ROW_Y(3)
 #define USB_GAP 8
-#define USB_HALF ((BTN_W - USB_GAP) / 2)
-#define USB_L_X BTN_X
-#define USB_R_X (BTN_X + USB_HALF + USB_GAP)
-#define PWR_Y  260
-#define PWR_H  36
+#define USB_HALF ((VAL_W - USB_GAP) / 2)
+#define USB_L_X VAL_X
+#define USB_R_X (VAL_X + USB_HALF + USB_GAP)
+#define PWR_Y  ROW_Y(4)
 
 #define COL_TAB    0xff1c2128u
 #define COL_PANEL  0xff121418u
@@ -331,6 +334,12 @@ static void draw_text_centered(unsigned char *base, int rx, int ry, int rw, int 
     draw_text(base, x, y, s, color);
 }
 
+static void draw_label(unsigned char *base, int y, const char *s)
+{
+    int th = 7 * SCALE;
+    draw_text(base, LAB_X, y + (ROW_H - th) / 2, s, COL_TITLE);
+}
+
 static int jog_milli(void)
 {
     int g;
@@ -346,10 +355,6 @@ static void jog_label(char *dst, int milli)
 {
     int pct = milli / 10;
     int i = 0;
-    dst[i++] = 'J';
-    dst[i++] = 'O';
-    dst[i++] = 'G';
-    dst[i++] = ' ';
     if (pct >= 100)
         dst[i++] = (char)('0' + pct / 100);
     if (pct >= 10)
@@ -363,7 +368,7 @@ static void log_gain(int milli)
     char msg[32];
     char label[16];
     int n = 0;
-    const char *p = "overlay: ";
+    const char *p = "overlay: JOG ";
     jog_label(label, milli);
     while (*p)
         msg[n++] = *p++;
@@ -383,8 +388,7 @@ static unsigned long long mono_ms(void)
 }
 
 static int pull1, pull2;
-/* 0 = one full-width EJECT. 1 = both slots. 2 = confirm on the chosen slot. */
-static int eject_open;
+/* 0 = idle. 1 or 2 = that slot is waiting for the YES tap. */
 static int eject_arm;
 static int power_arm;
 
@@ -415,6 +419,21 @@ static int file_exists(const char *path)
         return 0;
     close(fd);
     return 1;
+}
+
+static unsigned hash_bytes(unsigned h, const void *data, unsigned len)
+{
+    const unsigned char *p = data;
+    while (len--) {
+        h ^= *p++;
+        h *= 16777619u;
+    }
+    return h;
+}
+
+static unsigned hash_string(unsigned h, const char *s)
+{
+    return hash_bytes(h, s, (unsigned)strlen(s) + 1);
 }
 
 static void eject_request(int slot)
@@ -669,19 +688,38 @@ static int ensure_map(int fb_fd)
 
 void overlay_paint(int fb_fd, unsigned yoffset)
 {
+    static unsigned last_hash[3];
+    static unsigned char hash_valid[3];
     unsigned char *base;
     unsigned off;
+    unsigned hash;
+    int page;
     int mode;
+    int open;
+    int jog;
     char label[16];
     char name1[32];
     char name2[32];
 
     apply_pending();
     apply_wave();
-    if (ov_is_open()) {
+    open = ov_is_open();
+    if (open) {
         refresh_mode();
         if (!ov_wave_cur)
             ov_wave_cur = read_wave();
+    }
+    mode = ov_mode;
+    jog = jog_milli();
+    pull1 = 0;
+    pull2 = 0;
+    name1[0] = '\0';
+    name2[0] = '\0';
+    if (open) {
+        pull1 = file_exists(USB_PULL1);
+        pull2 = file_exists(USB_PULL2);
+        read_file(USB_NAME1, name1, sizeof(name1));
+        read_file(USB_NAME2, name2, sizeof(name2));
     }
     if (!ensure_map(fb_fd))
         return;
@@ -691,65 +729,93 @@ void overlay_paint(int fb_fd, unsigned yoffset)
         return;
     base = (unsigned char *)fb_map + off;
 
+    /* The rotated DirectFB path normally renders into physical page 0. Drawing
+     * the overlay on every flip therefore means drawing into the framebuffer
+     * while it is being scanned out, which produces a moving partial-panel
+     * tear. The rot16 driver preserves these pixels, so paint each page only
+     * when visible overlay state changes. */
+    page = (int)(yoffset / 1280u);
+    if (page < 0 || page >= 3)
+        page = 0;
+    hash = 2166136261u;
+    hash = hash_bytes(hash, &open, sizeof(open));
+    hash = hash_bytes(hash, &mode, sizeof(mode));
+    hash = hash_bytes(hash, &jog, sizeof(jog));
+    hash = hash_bytes(hash, &ov_wave_cur, sizeof(ov_wave_cur));
+    hash = hash_bytes(hash, &eject_arm, sizeof(eject_arm));
+    hash = hash_bytes(hash, &pull1, sizeof(pull1));
+    hash = hash_bytes(hash, &pull2, sizeof(pull2));
+    hash = hash_bytes(hash, &power_arm, sizeof(power_arm));
+    hash = hash_string(hash, name1);
+    hash = hash_string(hash, name2);
+    if (hash_valid[page] && last_hash[page] == hash)
+        return;
+
     fill_visual(base, TAB_X, TAB_Y, TAB_W, TAB_H, COL_EDGE);
     fill_visual(base, TAB_X + 1, TAB_Y + 1, TAB_W - 2, TAB_H - 2, COL_TAB);
     draw_text_centered(base, TAB_X, TAB_Y, TAB_W, TAB_H, "MOD", COL_TEXT);
-    if (!ov_is_open())
+    if (!open) {
+        last_hash[page] = hash;
+        hash_valid[page] = 1;
         return;
+    }
 
-    mode = ov_mode;
     fill_visual(base, PAN_X, PAN_Y, PAN_W, PAN_H, COL_EDGE);
     fill_visual(base, PAN_X + 2, PAN_Y + 2, PAN_W - 4, PAN_H - 4, COL_PANEL);
-    draw_text_centered(base, PAN_X, PAN_Y + 6, PAN_W, 22, "PLAY MODE", COL_TITLE);
 
-    fill_visual(base, BTN_X, BTN1_Y, BTN_W, BTN_H, COL_ON);
-    draw_text_centered(base, BTN_X, BTN1_Y, BTN_W, BTN_H, mode_name(mode), COL_TEXT);
+    draw_label(base, MODE_Y, "MODE");
+    fill_visual(base, VAL_X, MODE_Y, VAL_W, ROW_H, COL_ON);
+    draw_text_centered(base, VAL_X, MODE_Y, VAL_W, ROW_H, mode_name(mode), COL_TEXT);
 
-    jog_label(label, jog_milli());
-    fill_visual(base, STEP_DN_X, JOG_Y, STEP_W, JOG_H, COL_BTN);
-    draw_minus_mark(base, STEP_DN_X, JOG_Y, STEP_W, JOG_H);
-    fill_visual(base, STEP_UP_X, JOG_Y, STEP_W, JOG_H, COL_BTN);
-    draw_plus_mark(base, STEP_UP_X, JOG_Y, STEP_W, JOG_H);
+    jog_label(label, jog);
+    draw_label(base, JOG_Y, "JOG");
+    fill_visual(base, STEP_DN_X, JOG_Y, STEP_W, ROW_H, COL_BTN);
+    draw_minus_mark(base, STEP_DN_X, JOG_Y, STEP_W, ROW_H);
+    fill_visual(base, STEP_UP_X, JOG_Y, STEP_W, ROW_H, COL_BTN);
+    draw_plus_mark(base, STEP_UP_X, JOG_Y, STEP_W, ROW_H);
     draw_text_centered(base, STEP_DN_X + STEP_W, JOG_Y,
-                       STEP_UP_X - (STEP_DN_X + STEP_W), JOG_H, label, COL_TEXT);
+                       STEP_UP_X - (STEP_DN_X + STEP_W), ROW_H, label, COL_TEXT);
 
+    draw_label(base, WAVE_Y, "WAVE");
     {
         static const int wave_col[3] = {1, 3, 4};
         static const char *wave_name[3] = {"BLUE", "RGB", "3BAND"};
         int i;
         for (i = 0; i < 3; i++) {
             int x = WAVE_X + i * (WAVE_BTN + WAVE_GAP);
-            fill_visual(base, x, WAVE_Y, WAVE_BTN, WAVE_H,
+            fill_visual(base, x, WAVE_Y, WAVE_BTN, ROW_H,
                         ov_wave_cur == wave_col[i] ? COL_ON : COL_BTN);
-            draw_text_centered(base, x, WAVE_Y, WAVE_BTN, WAVE_H, wave_name[i], COL_TEXT);
+            draw_text_centered(base, x, WAVE_Y, WAVE_BTN, ROW_H, wave_name[i], COL_TEXT);
         }
     }
 
-    pull1 = file_exists(USB_PULL1);
-    pull2 = file_exists(USB_PULL2);
-    read_file(USB_NAME1, name1, sizeof(name1));
-    read_file(USB_NAME2, name2, sizeof(name2));
-    if (!eject_open) {
-        fill_visual(base, BTN_X, USB_Y, BTN_W, USB_H, COL_BTN);
-        draw_text_centered(base, BTN_X, USB_Y, BTN_W, USB_H, "EJECT", COL_TEXT);
-    } else {
-        fill_visual(base, USB_L_X, USB_Y, USB_HALF, USB_H,
-                    (eject_arm == 1 || pull1) ? COL_ON : COL_BTN);
-        if (eject_arm == 1 && !pull1)
-            draw_text_centered(base, USB_L_X, USB_Y, USB_HALF, USB_H, "YES", COL_TEXT);
-        else
-            draw_volume(base, USB_L_X, USB_Y, USB_HALF, USB_H, name1, "USB 1", pull1);
-        fill_visual(base, USB_R_X, USB_Y, USB_HALF, USB_H,
-                    (eject_arm == 2 || pull2) ? COL_ON : COL_BTN);
-        if (eject_arm == 2 && !pull2)
-            draw_text_centered(base, USB_R_X, USB_Y, USB_HALF, USB_H, "YES", COL_TEXT);
-        else
-            draw_volume(base, USB_R_X, USB_Y, USB_HALF, USB_H, name2, "USB 2", pull2);
-    }
+    draw_label(base, USB_Y, "EJECT");
+    fill_visual(base, USB_L_X, USB_Y, USB_HALF, ROW_H,
+                (eject_arm == 1 || pull1) ? COL_ON : COL_BTN);
+    if (eject_arm == 1 && !pull1)
+        draw_text_centered(base, USB_L_X, USB_Y, USB_HALF, ROW_H, "YES", COL_TEXT);
+    else
+        draw_volume(base, USB_L_X, USB_Y, USB_HALF, ROW_H, name1, "USB 1", pull1);
+    fill_visual(base, USB_R_X, USB_Y, USB_HALF, ROW_H,
+                (eject_arm == 2 || pull2) ? COL_ON : COL_BTN);
+    if (eject_arm == 2 && !pull2)
+        draw_text_centered(base, USB_R_X, USB_Y, USB_HALF, ROW_H, "YES", COL_TEXT);
+    else
+        draw_volume(base, USB_R_X, USB_Y, USB_HALF, ROW_H, name2, "USB 2", pull2);
 
-    fill_visual(base, BTN_X, PWR_Y, BTN_W, PWR_H, power_arm ? COL_ON : COL_BTN);
-    draw_text_centered(base, BTN_X, PWR_Y, BTN_W, PWR_H,
-                       power_arm ? "YES" : "POWER", COL_TEXT);
+    {
+        int pw = PAN_W - 12;
+        int th = 7 * SCALE;
+        int ty = PWR_Y + (ROW_H - th) / 2;
+        fill_visual(base, PAN_X + 6, PWR_Y, pw, ROW_H, power_arm ? COL_ON : COL_BTN);
+        draw_text(base, LAB_X, ty, "POWER", COL_TEXT);
+        if (power_arm) {
+            int tw = text_width("YES");
+            draw_text(base, VAL_X + VAL_W - tw - 8, ty, "YES", COL_TEXT);
+        }
+    }
+    last_hash[page] = hash;
+    hash_valid[page] = 1;
 }
 
 int overlay_touch(int down, int was_down, int lx, int ly)
@@ -757,7 +823,7 @@ int overlay_touch(int down, int was_down, int lx, int ly)
     int vx = 1279 - lx;
     int vy = ly;
     int on_tab, on_panel, on_mode, on_jog_dn, on_jog_up;
-    int on_eject, on_usb1, on_usb2, on_blue, on_rgb, on_band, on_power;
+    int on_usb1, on_usb2, on_blue, on_rgb, on_band, on_power;
     int fresh;
     unsigned long long now;
     static unsigned long long last_ev_ms;
@@ -776,23 +842,21 @@ int overlay_touch(int down, int was_down, int lx, int ly)
     if (fresh) {
         on_tab = in_rect(vx, vy, TAB_X, TAB_Y, TAB_W, TAB_H);
         on_panel = in_rect(vx, vy, PAN_X, PAN_Y, PAN_W, PAN_H);
-        on_mode = in_rect(vx, vy, BTN_X, BTN1_Y, BTN_W, BTN_H);
-        on_jog_dn = in_rect(vx, vy, STEP_DN_X, JOG_Y, STEP_W, JOG_H);
-        on_jog_up = in_rect(vx, vy, STEP_UP_X, JOG_Y, STEP_W, JOG_H);
-        on_blue = in_rect(vx, vy, WAVE_X, WAVE_Y, WAVE_BTN, WAVE_H);
-        on_rgb = in_rect(vx, vy, WAVE_X + (WAVE_BTN + WAVE_GAP), WAVE_Y, WAVE_BTN, WAVE_H);
-        on_band = in_rect(vx, vy, WAVE_X + 2 * (WAVE_BTN + WAVE_GAP), WAVE_Y, WAVE_BTN, WAVE_H);
-        on_eject = in_rect(vx, vy, BTN_X, USB_Y, BTN_W, USB_H);
-        on_usb1 = in_rect(vx, vy, USB_L_X, USB_Y, USB_HALF, USB_H);
-        on_usb2 = in_rect(vx, vy, USB_R_X, USB_Y, USB_HALF, USB_H);
-        on_power = in_rect(vx, vy, BTN_X, PWR_Y, BTN_W, PWR_H);
+        on_mode = in_rect(vx, vy, VAL_X, MODE_Y, VAL_W, ROW_H);
+        on_jog_dn = in_rect(vx, vy, STEP_DN_X, JOG_Y, STEP_W, ROW_H);
+        on_jog_up = in_rect(vx, vy, STEP_UP_X, JOG_Y, STEP_W, ROW_H);
+        on_blue = in_rect(vx, vy, WAVE_X, WAVE_Y, WAVE_BTN, ROW_H);
+        on_rgb = in_rect(vx, vy, WAVE_X + (WAVE_BTN + WAVE_GAP), WAVE_Y, WAVE_BTN, ROW_H);
+        on_band = in_rect(vx, vy, WAVE_X + 2 * (WAVE_BTN + WAVE_GAP), WAVE_Y, WAVE_BTN, ROW_H);
+        on_usb1 = in_rect(vx, vy, USB_L_X, USB_Y, USB_HALF, ROW_H);
+        on_usb2 = in_rect(vx, vy, USB_R_X, USB_Y, USB_HALF, ROW_H);
+        on_power = in_rect(vx, vy, PAN_X + 6, PWR_Y, PAN_W - 12, ROW_H);
         if (!ov_is_open()) {
             ov_grab = on_tab;
             if (on_tab) {
                 ov_set_open(1);
                 ov_mode_known = 0;
                 ov_wave_cur = 0;
-                eject_open = 0;
                 eject_arm = 0;
                 power_arm = 0;
             }
@@ -800,7 +864,6 @@ int overlay_touch(int down, int was_down, int lx, int ly)
             ov_grab = 1;
             if (on_tab) {
                 ov_set_open(0);
-                eject_open = 0;
                 eject_arm = 0;
                 power_arm = 0;
             }
@@ -823,16 +886,13 @@ int overlay_touch(int down, int was_down, int lx, int ly)
                 request_wave(3);
             else if (on_band)
                 request_wave(4);
-            else if (!eject_open && on_eject) {
-                eject_open = 1;
-                eject_arm = 0;
-            } else if (eject_open && on_usb1 && !pull1) {
+            else if (on_usb1 && !pull1) {
                 if (eject_arm == 1) {
                     eject_request(1);
                     eject_arm = 0;
                 } else
                     eject_arm = 1;
-            } else if (eject_open && on_usb2 && !pull2) {
+            } else if (on_usb2 && !pull2) {
                 if (eject_arm == 2) {
                     eject_request(2);
                     eject_arm = 0;
@@ -845,7 +905,6 @@ int overlay_touch(int down, int was_down, int lx, int ly)
                     power_arm = 1;
             } else if (!on_panel) {
                 ov_set_open(0);
-                eject_open = 0;
                 eject_arm = 0;
                 power_arm = 0;
             }

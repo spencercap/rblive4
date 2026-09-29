@@ -97,7 +97,7 @@ master-cue function instead (see below).
 | **TIME encoder turn** | **CC 36**, relative | depends on encoder mode (below) |
 | **TIME encoder push** | **note 25**, short tap | cycle encoder mode: **BEAT → TIME → BPM** |
 | **BEAT < / >** | hold **note 25** (or SHIFT) + turn CC 36 | `0x4490` / `0x4491` (momentary, any mode) |
-| **FX SELECT hold** | **note 30** held ~600 ms | Beat FX BPM detect mode **AUTO** (follow master/source BPM) |
+| **FX SELECT hold** | **note 30** held ~600 ms | return Beat FX BPM to **AUTO/quantize** |
 
 #### Channel assign
 
@@ -148,8 +148,14 @@ encoder turn (CC 36) edits. The default is **BEAT**.
 Hold TIME (or SHIFT) and turn still forces BEAT `<` / `>` without changing
 the stored mode.
 
-Hold **FX SELECT** (note 30) for 600 ms to put BPM detection back in
-**AUTO**, so the displayed FX BPM follows the current master/source deck.
+Hold **FX SELECT** (note 30) for 600 ms to return Beat FX BPM to
+**AUTO/quantize** after changing BPM manually. This lets rbp use the live,
+pitch-adjusted BPM and restore the on-screen QUANTIZE state. The SC Live 4
+lacks the RX3 mixer-hardware state that MAIN normally uses to identify its
+source deck. When that native lookup fails, the shim follows rbp's sync-master
+deck and calculates its current BPM from the analyzed BPM and live tempo
+offset. The release path also checks elapsed hold time, avoiding a race at the
+threshold.
 
 `onEv_BeatFxTime` → `BeatFxTimeKnob(value, absolute)` is called with
 **absolute = false**, so the argument is a **rotation delta**, not a position —
