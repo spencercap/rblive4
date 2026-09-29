@@ -1,5 +1,7 @@
 # rblive4 (spencercap's fork)
 
+runs real rekordbox software on denon hardware.
+
 see [CHANGELOG.md](https://github.com/spencercap/rblive4/blob/main/CHANGELOG.md) for how this is different from the [erhan's source](https://github.com/erhan-/rblive4). but briefly:
 - ✅ BeatFX + knobs work 
 - ✅ Loop encoders work
