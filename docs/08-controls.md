@@ -29,6 +29,40 @@ The SC Live 4 has **4 mixer strips**, but rbp is a **2-channel** mixer, so only
 strips **1/2** are mapped (→ decks 1/2). Strips 3/4 are used for the
 master-cue function instead (see below).
 
+## MOD menu
+
+A **MOD** tab at the top center of the screen opens this panel. Taps on the tab and the panel stay in the overlay. Tapping outside it closes the panel. Green marks the current play mode, waveform color, and quantize state.
+
+![MOD menu](mod-menu.png)
+
+| Row | What it does | rekordbox / XDJ-RX3 equivalent |
+|---|---|---|
+| **MODE** | Each tap cycles **SINGLE → CONTINUE → REPEAT → ALL REPEAT**. The choice is saved in `XdjSettings.dat`. | Utility play mode, `UiSetUtilAutoPlayMode` |
+| **JOG** | Jog sensitivity for both decks. **−** and **+** step by 10% between 20% and 200%. It starts at 40% of the original wheel calibration and lasts until reboot. | No RX3 key. The shim scales each jog step. |
+| **WAVE** | Waveform color: **BLUE**, **RGB**, or **3BAND**. | Waveform color setting (`CmnFunc` waveform color 1 / 3 / 4) |
+| **QUANT** | **ON** or **OFF** for both decks. **OFF** lets cue land off the beat grid. | The QUANTIZE button, `UiSetQuantizeOnOff`. The settings entry "quantize beat value" only changes the grid size and leaves snapping on. |
+| **TRACK** | **TAG** adds the highlighted browse track to the Tag List. **TAGS** opens the Tag List. **FIND** opens Search, the screen with the on-screen keyboard. TAGS and FIND close the panel so that screen is visible. | **TAG** is Tag Track (`0x420e`, `UiKey_AddTag`). **TAGS** is TAG LIST (`0x0203`). **FIND** is SEARCH (`0x0205`). |
+| **EJECT** | Both USB slots are shown, labeled with a shortened volume name. The first tap on a slot shows **YES**. The **YES** tap ejects that stick. | No RX3 key. `usb-watch.sh` releases the mount. |
+| **POWER** | The first tap shows **YES**. The **YES** tap ejects both sticks, then powers the unit off. Closing the panel before **YES** cancels it. | No RX3 key. The launcher handles the shutdown. |
+
+## Browse buttons
+
+These are the SC Live 4 buttons that stand in for the XDJ-RX3 browse keys. A hold is about 600 ms. The short tap is sent only after the button is released, so a hold does not also fire the tap.
+
+| SC Live 4 | Gesture | rekordbox / XDJ-RX3 |
+|---|---|---|
+| **VIEW** (note 14) | tap | **BROWSE** (`0x0202`) |
+| **MENU** (note 13) | tap | **MENU** (`0x0206`) |
+| **LIGHTING** (note 39) | tap | **TAG LIST** (`0x0203`). Same as MOD **TAGS**. |
+| **LIGHTING** | hold | **SEARCH** (`0x0205`), the browse screen with the on-screen keyboard. Same as MOD **FIND**. |
+| **FWD** (note 4) | tap | **SOURCE** (`0x0201`). While the Source menu is open and a rekordbox stick is mounted, the tap is **USB1** (`0x0209`) instead, which opens that drive. |
+| **FWD** | hold | **TAG TRACK** (`0x420e`). Adds the highlighted browse track to the Tag List. Same as MOD **TAG**. |
+| **BACK** (note 3) | tap | **BACK** (`0x420d`) |
+| Browse knob push (note 6) | tap | **SELECTOR** (`0x420c`). In the Source menu with a mounted stick, the push is **USB1**, same as a short FWD tap there. |
+| Browse knob turn (CC 5) | turn | Selector rotate |
+
+LIGHTING is the unused button under MENU. It has no Engine OS action in this port. VIEW is the button above MENU.
+
 ## Mapping table (as built in `scripts/shims/knobshim2.c`)
 
 ### Global (ch 15)
@@ -37,11 +71,12 @@ master-cue function instead (see below).
 |---|---|---|
 | LOAD deck 1 / 2 | note 1 / 2 | `0x4311` K_LOAD (deck 1 / 2) |
 | BACK | note 3 | `0x420d` K_BACK |
-| FWD | note 4 | `0x0201` K_SOURCE |
+| FWD | note 4 | short tap `0x0201` K_SOURCE (USB1 while the Source menu is open); hold (~600 ms) `0x420e` K_TAGTRACK, adds the highlighted track to Tag List |
 | Browse knob push | note 6 | `0x420c` K_SELECTOR |
 | Browse knob turn | CC 5 | `0x420c` rotate |
 | MENU | note 13 | `0x0206` K_MENU |
 | VIEW | note 14 | `0x0202` K_BROWSE |
+| **LIGHTING** | note 39 | short press `0x0203` K_TAGLIST; hold (~600 ms) `0x0205` K_SEARCH (on-screen keyboard) |
 | Crossfader | CC 14 | `0x6017` K_XFADER |
 | Main Vol | CC 20 | `g_master_gain` — audioshim, **ch0/1 (XLR) only** |
 | Speaker/booth level | CC 15 | `g_speaker_gain` — audioshim, **ch6/7 (built-in monitors)** |

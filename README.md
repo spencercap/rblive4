@@ -34,7 +34,7 @@ unchanged.
 |---|---|---|
 | Display | 800×1280 portrait framebuffer, rotated, rekordbox UI full-screen | [docs/06](docs/06-display.md) |
 | Touchscreen | ILI2117 capacitive, identity calibration installed in the chroot | [docs/07](docs/07-touch.md) |
-| Controls | transport, deck, mixer/4-strip, jog, pads and DJ / Sound Color FX mapped from the SC Live 4 MIDI surface | [docs/08](docs/08-controls.md) |
+| Controls | transport, deck, mixer, jog, pads, DJ / Sound Color FX, and the MOD menu | [docs/08](docs/08-controls.md) |
 | Panel LEDs | PLAY / CUE / SYNC / KEY LOCK / VINYL / SLIP and FX LEDs mirror rbp's own LED state (blink included) | [docs/08](docs/08-controls.md) |
 | VU meters | master L/R + channel 1/2 live levels | [docs/08](docs/08-controls.md) |
 | Audio | master (XLR/RCA), headphones + cue, booth and built-in monitors on the JP21 8-channel codec | [docs/09](docs/09-audio.md) |

@@ -155,9 +155,11 @@ static int is_rbp_process(void)
 #define K_LINK       0x0207    /* RX3 LINK key */
 #define K_REKORDBOX  0x0208    /* RX3 REKORDBOX key */
 #define K_TAGLIST    0x0203
+#define K_SEARCH     0x0205    /* browse Search: on-screen keyboard */
 #define K_MENU       0x0206
 #define K_INFO       0x020b
 #define K_BACK       0x420d    /* RX3 BACK key */
+#define K_TAGTRACK   0x420e    /* add the highlighted browse track to Tag List */
 #define K_LOAD       0x4311
 #define K_PLAY       0x4101
 #define K_CUE        0x4102
@@ -511,6 +513,27 @@ static volatile int fx_select_release_fire;
 static unsigned long long fx_select_press_ms;
 static void fx_bpm_tap(void);
 
+/* LIGHTING (ch15 note 39) is unused on the SC Live 4. A short press opens
+ * Tag List. Holding it opens Search, the browse screen with the keyboard.
+ * The press is sent only after the gesture is known, then released on the
+ * next hold-thread tick so the browse task sees the down edge. */
+#define LIGHTING_HOLD_MS 600
+#define LIGHTING_TAP_MS  80
+static volatile int lighting_held;
+static volatile int lighting_hold_fired;
+static volatile int lighting_release_fire;
+static unsigned long long lighting_press_ms;
+static volatile int lighting_up_key;
+static unsigned long long lighting_up_ms;
+
+/* FWD (ch15 note 4): a short tap still opens Source (or USB1 while the
+ * Source menu is up). Holding it tags the highlighted browse track. */
+#define FWD_HOLD_MS 600
+static volatile int fwd_held;
+static volatile int fwd_hold_fired;
+static volatile int fwd_release_fire;
+static unsigned long long fwd_press_ms;
+
 /* "loop-in armed" latch per deck (0 = deck 1), driven by the LOOP IN/OUT keys;
  * the LED bridge turns it into the SC Live 4 blink pattern. */
 static int led_loop_armed[2];
@@ -688,6 +711,18 @@ static int me_get_master_cue(void)
      return ((int (*)(void *))ME_GET_MASTER_CUE)(engine);
 }
 
+static void key_tap(int key)
+{
+     int pending = lighting_up_key;
+     if (pending) {
+          lighting_up_key = 0;
+          send_rx_key(pending, OP_RELEASE, CH_GLOBAL, 0);
+     }
+     send_rx_key(key, OP_PRESS, CH_GLOBAL, 0);
+     lighting_up_key = key;
+     lighting_up_ms = now_ms() + LIGHTING_TAP_MS;
+}
+
 static void handle_note(int ch, int note, int on)
 {
      /* SC Live 4 mixer PFL buttons (strips 1/2 = ch 0/1, note 13): toggle
@@ -776,6 +811,24 @@ static void handle_note(int ch, int note, int on)
           }
           return;
      }
+     /* LIGHTING, below MENU. Decide on release so a hold never also opens
+      * Tag List. The 50 Hz worker fires Search at the threshold. */
+     if (ch == 15 && note == 39) {
+          if (on) {
+               lighting_held = 1;
+               lighting_hold_fired = 0;
+               lighting_release_fire = 0;
+               lighting_press_ms = now_ms();
+          } else {
+               if (lighting_held && !lighting_hold_fired &&
+                   now_ms() - lighting_press_ms >= LIGHTING_HOLD_MS)
+                    lighting_release_fire = 1;
+               else if (!lighting_hold_fired)
+                    key_tap(K_TAGLIST);
+               lighting_held = 0;
+          }
+          return;
+     }
 
      /* SC Live 4 global Sound Color FX select (ch15 notes 21..24) -> both mixer
       * channels (Filter/DubEcho/Noise/Sweep). */
@@ -797,10 +850,29 @@ static void handle_note(int ch, int note, int on)
           }
      }
 
-     /* Source menu + mounted Rekordbox stick: knob push and FWD become the
-      * USB1 source button.  Swallow BOTH edges so the generic SELECTOR/SOURCE
-      * mapping below never fires for this gesture. */
-     if (ch == 15 && (note == 4 || note == 6)) {
+     /* FWD: short tap opens Source. In the Source menu, with a rekordbox
+      * stick mounted, that tap is USB1 instead. A hold tags the highlighted
+      * track and does not open Source. */
+     if (ch == 15 && note == 4) {
+          if (on) {
+               fwd_held = 1;
+               fwd_hold_fired = 0;
+               fwd_release_fire = 0;
+               fwd_press_ms = now_ms();
+          } else {
+               if (fwd_held && !fwd_hold_fired &&
+                   now_ms() - fwd_press_ms >= FWD_HOLD_MS)
+                    fwd_release_fire = 1;
+               else if (!fwd_hold_fired)
+                    key_tap(source_menu_with_usb1() ? K_USB1 : K_SOURCE);
+               fwd_held = 0;
+          }
+          return;
+     }
+
+     /* Source menu + mounted Rekordbox stick: the browse-knob push becomes
+      * the USB1 source button. Swallow both edges so SELECTOR never fires. */
+     if (ch == 15 && note == 6) {
           if (source_menu_with_usb1()) {
                send_rx_key(K_USB1, on ? OP_PRESS : OP_RELEASE, CH_GLOBAL, 0);
                if (verbose)
@@ -1660,7 +1732,7 @@ static void build_maps(void)
      add_note(15, 1, K_LOAD, 1);               /* deck 1 LOAD */
      add_note(15, 2, K_LOAD, 2);               /* deck 2 LOAD */
      add_note(15, 3,  K_BACK, CH_GLOBAL);      /* BACK */
-     add_note(15, 4,  K_SOURCE, CH_GLOBAL);    /* FWD -> source */
+     /* FWD (note 4) is handled in handle_note: tap = source, hold = tag track */
      add_note(15, 6,  K_SELECTOR, CH_GLOBAL);  /* browse knob push */
      add_note(15, 13, K_MENU, CH_GLOBAL);      /* MENU */
      add_note(15, 14, K_BROWSE, CH_GLOBAL);    /* VIEW */
@@ -2799,6 +2871,29 @@ static void *sync_hold_thread(void *arg)
                          klog("knobshim2: deck%d SYNC held -> MASTER 0x4111\n",
                               d + 1);
                }
+          }
+          if (lighting_up_key && now_ms() >= lighting_up_ms) {
+               int key = lighting_up_key;
+               lighting_up_key = 0;
+               send_rx_key(key, OP_RELEASE, CH_GLOBAL, 0);
+          }
+          if ((!fwd_hold_fired && fwd_held &&
+               now_ms() - fwd_press_ms >= FWD_HOLD_MS) ||
+              fwd_release_fire) {
+               fwd_release_fire = 0;
+               fwd_hold_fired = 1;
+               key_tap(K_TAGTRACK);
+               if (verbose)
+                    klog("knobshim2: FWD held -> TAG TRACK 0x420e\n");
+          }
+          if ((!lighting_hold_fired && lighting_held &&
+               now_ms() - lighting_press_ms >= LIGHTING_HOLD_MS) ||
+              lighting_release_fire) {
+               lighting_release_fire = 0;
+               lighting_hold_fired = 1;
+               key_tap(K_SEARCH);
+               if (verbose)
+                    klog("knobshim2: LIGHTING held -> SEARCH 0x0205\n");
           }
           if ((!fx_select_hold_fired && fx_select_held &&
                now_ms() - fx_select_press_ms >= FX_SELECT_HOLD_MS) ||

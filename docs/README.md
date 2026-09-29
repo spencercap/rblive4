@@ -12,7 +12,7 @@ Documentation for the XDJ-RX3 `rb` → Denon SC Live 4 port.
 | 05 | [chroot](05-chroot.md) | soft-float glibc-2.13 chroot on the SC Live 4 |
 | 06 | [display](06-display.md) | DirectFB fbdev on the 800×1280 portrait panel + `directfbrc` |
 | 07 | [touch](07-touch.md) | ILI2117 → tsc2007 shim + TouchCalib |
-| 08 | [controls](08-controls.md) | SC Live 4 MIDI → rbp keycodes, LEDs, VU |
+| 08 | [controls](08-controls.md) | SC Live 4 MIDI → rbp keycodes, the MOD menu, browse buttons, LEDs, VU |
 | 09 | [audio](09-audio.md) | JP21 8-channel codec + built-in speakers |
 | 10 | [usb](10-usb.md) | USB stick + rekordbox database |
 | 11 | [runtime-launcher](11-runtime-launcher.md) | launch sequence / systemd integration |

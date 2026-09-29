@@ -4,7 +4,8 @@
  * and steals taps before they reach rbp. A MOD tab at the top center of
  * the upright UI opens a panel. Each row names the setting on the left,
  * then the value: MODE (SINGLE, CONTINUE, REPEAT, ALL REPEAT), JOG
- * (− percent +), WAVE (BLUE, RGB, 3BAND), QUANT (ON, OFF), EJECT, and POWER.
+ * (− percent +), WAVE (BLUE, RGB, 3BAND), QUANT (ON, OFF), TRACK
+ * (TAG, TAGS, FIND), EJECT, and POWER.
  * The MODE button cycles those four play modes. EJECT asks usb-watch to
  * release the stick; the button then reads PULL until the stick is removed.
  * Play mode is UiSetUtilAutoPlayMode, the same call the RX3 utility menu
@@ -55,6 +56,17 @@
  * This is the QUANT button, not the quantize-beat-value setting. */
 #define UI_SET_QUANTIZE ((void (*)(int, int))0x000fe184)
 #define UI_GET_QUANTIZE ((int (*)(int))0x000fd36c)
+/* KeyManager::sendKey. Same path knobshim uses for the hardware buttons. */
+#define UI_OBJ_MGR_GLOBAL 0x2685f2cUL
+#define KEY_MANAGER_OFF   100
+#define SENDKEY_WORD      2
+#define OP_PRESS          0
+#define OP_RELEASE        2
+#define CH_GLOBAL         1
+#define K_TAGLIST         0x0203
+#define K_SEARCH          0x0205
+#define K_TAGTRACK        0x420e
+#define KEY_TAP_MS        80
 #define CMN_BASE ((volatile unsigned char *)0x03253564)
 /* SetPlayInfo passes this per-deck pair (device, kind) into WaveDispColor. */
 #define DECK_WAVE ((volatile unsigned char *)0x0216b3c0)
@@ -75,9 +87,9 @@
 #define TAB_X ((1280 - TAB_W) / 2)
 #define TAB_Y 8
 
-/* Name on the left, value on the right. Six rows under the MOD tab. */
+/* Name on the left, value on the right. Seven rows under the MOD tab. */
 #define PAN_W 340
-#define PAN_H 276
+#define PAN_H 320
 #define PAN_X ((1280 - PAN_W) / 2)
 #define PAN_Y 48
 
@@ -106,12 +118,13 @@
 #define QUANT_HALF ((VAL_W - QUANT_GAP) / 2)
 #define QUANT_ON_X VAL_X
 #define QUANT_OFF_X (VAL_X + QUANT_HALF + QUANT_GAP)
-#define USB_Y  ROW_Y(4)
+#define TRACK_Y ROW_Y(4)
+#define USB_Y  ROW_Y(5)
 #define USB_GAP 8
 #define USB_HALF ((VAL_W - USB_GAP) / 2)
 #define USB_L_X VAL_X
 #define USB_R_X (VAL_X + USB_HALF + USB_GAP)
-#define PWR_Y  ROW_Y(5)
+#define PWR_Y  ROW_Y(6)
 
 #define COL_TAB    0xff1c2128u
 #define COL_PANEL  0xff121418u
@@ -137,6 +150,11 @@ static volatile int ov_quant_on;
 static int          ov_quant_seen;
 static int          ov_quant_known;
 static int          ov_quant[2];
+static volatile int ov_track_seq;
+static volatile int ov_track_act;     /* 1 TAG, 2 TAGS, 3 FIND */
+static int          ov_track_seen;
+static volatile int ov_key_up;
+static unsigned long long ov_key_up_ms;
 static int          ov_wave_cur;
 static int          ov_grab;          /* finger went down on the overlay */
 
@@ -481,9 +499,15 @@ static void draw_volume(unsigned char *base, int rx, int ry, int rw, int rh,
         draw_text_centered(base, rx, ry, rw, rh, "PULL", COL_TEXT);
         return;
     }
-    src = (name && name[0]) ? name : fallback;
+    /* An empty slot keeps the full "USB 1" / "USB 2" label. The four-letter
+     * cut is only for a real volume name. */
+    if (!name || !name[0]) {
+        draw_text_centered(base, rx, ry, rw, rh, fallback, COL_TEXT);
+        return;
+    }
+    src = name;
     dots = 0;
-    if (name && name[0]) {
+    {
         int len = 0;
         while (name[len])
             len++;
@@ -699,6 +723,73 @@ static void refresh_mode(void)
     ov_mode_known = 1;
 }
 
+static void send_key(int key, int op)
+{
+    void *mgr = *(void **)UI_OBJ_MGR_GLOBAL;
+    void *km;
+    void **vt;
+    void (*fn)(void *, int, int, int, long, float, long);
+    if (!mgr)
+        return;
+    km = *(void **)((char *)mgr + KEY_MANAGER_OFF);
+    if (!km)
+        return;
+    vt = *(void ***)km;
+    fn = (void (*)(void *, int, int, int, long, float, long))vt[SENDKEY_WORD];
+    if (!fn)
+        return;
+    fn(km, key, op, CH_GLOBAL, 0, 0.0f, 0);
+}
+
+/* Press now, release on a later paint. The browse task has to see the
+ * down edge; a press and release in the same call never opens the screen. */
+static void tap_key(int key)
+{
+    if (ov_key_up) {
+        send_key(ov_key_up, OP_RELEASE);
+        ov_key_up = 0;
+    }
+    send_key(key, OP_PRESS);
+    ov_key_up = key;
+    ov_key_up_ms = mono_ms() + KEY_TAP_MS;
+}
+
+static void release_key(void)
+{
+    int key;
+    if (!ov_key_up || mono_ms() < ov_key_up_ms)
+        return;
+    key = ov_key_up;
+    ov_key_up = 0;
+    send_key(key, OP_RELEASE);
+}
+
+static void request_track(int act)
+{
+    ov_track_act = act;
+    __sync_synchronize();
+    ov_track_seq++;
+}
+
+static void apply_track(void)
+{
+    int seq = ov_track_seq;
+    int act;
+    if (seq == ov_track_seen)
+        return;
+    __sync_synchronize();
+    act = ov_track_act;
+    ov_track_seen = seq;
+    if (act == 1)
+        tap_key(K_TAGTRACK);
+    else if (act == 2)
+        tap_key(K_TAGLIST);
+    else if (act == 3)
+        tap_key(K_SEARCH);
+    olog(act == 1 ? "overlay: TAG\n" :
+         act == 2 ? "overlay: TAGS\n" : "overlay: FIND\n");
+}
+
 static int ensure_map(int fb_fd)
 {
     struct {
@@ -753,9 +844,11 @@ void overlay_paint(int fb_fd, unsigned yoffset)
     char name1[32];
     char name2[32];
 
+    release_key();
     apply_pending();
     apply_wave();
     apply_quant();
+    apply_track();
     open = ov_is_open();
     if (open) {
         refresh_mode();
@@ -844,6 +937,17 @@ void overlay_paint(int fb_fd, unsigned yoffset)
         }
     }
 
+    draw_label(base, TRACK_Y, "TRACK");
+    {
+        static const char *track_name[3] = {"TAG", "TAGS", "FIND"};
+        int i;
+        for (i = 0; i < 3; i++) {
+            int x = WAVE_X + i * (WAVE_BTN + WAVE_GAP);
+            fill_visual(base, x, TRACK_Y, WAVE_BTN, ROW_H, COL_BTN);
+            draw_text_centered(base, x, TRACK_Y, WAVE_BTN, ROW_H, track_name[i], COL_TEXT);
+        }
+    }
+
     draw_label(base, QUANT_Y, "QUANT");
     fill_visual(base, QUANT_ON_X, QUANT_Y, QUANT_HALF, ROW_H,
                 (ov_quant[0] && ov_quant[1]) ? COL_ON : COL_BTN);
@@ -887,6 +991,7 @@ int overlay_touch(int down, int was_down, int lx, int ly)
     int vy = ly;
     int on_tab, on_panel, on_mode, on_jog_dn, on_jog_up;
     int on_usb1, on_usb2, on_blue, on_rgb, on_band, on_quant_on, on_quant_off, on_power;
+    int on_tag, on_tags, on_find;
     int fresh;
     unsigned long long now;
     static unsigned long long last_ev_ms;
@@ -913,6 +1018,9 @@ int overlay_touch(int down, int was_down, int lx, int ly)
         on_band = in_rect(vx, vy, WAVE_X + 2 * (WAVE_BTN + WAVE_GAP), WAVE_Y, WAVE_BTN, ROW_H);
         on_quant_on = in_rect(vx, vy, QUANT_ON_X, QUANT_Y, QUANT_HALF, ROW_H);
         on_quant_off = in_rect(vx, vy, QUANT_OFF_X, QUANT_Y, QUANT_HALF, ROW_H);
+        on_tag = in_rect(vx, vy, WAVE_X, TRACK_Y, WAVE_BTN, ROW_H);
+        on_tags = in_rect(vx, vy, WAVE_X + (WAVE_BTN + WAVE_GAP), TRACK_Y, WAVE_BTN, ROW_H);
+        on_find = in_rect(vx, vy, WAVE_X + 2 * (WAVE_BTN + WAVE_GAP), TRACK_Y, WAVE_BTN, ROW_H);
         on_usb1 = in_rect(vx, vy, USB_L_X, USB_Y, USB_HALF, ROW_H);
         on_usb2 = in_rect(vx, vy, USB_R_X, USB_Y, USB_HALF, ROW_H);
         on_power = in_rect(vx, vy, PAN_X + 6, PWR_Y, PAN_W - 12, ROW_H);
@@ -956,7 +1064,19 @@ int overlay_touch(int down, int was_down, int lx, int ly)
                 request_quant(1);
             else if (on_quant_off)
                 request_quant(0);
-            else if (on_usb1 && !pull1) {
+            else if (on_tag)
+                request_track(1);
+            else if (on_tags) {
+                request_track(2);
+                ov_set_open(0);
+                eject_arm = 0;
+                power_arm = 0;
+            } else if (on_find) {
+                request_track(3);
+                ov_set_open(0);
+                eject_arm = 0;
+                power_arm = 0;
+            } else if (on_usb1 && !pull1) {
                 if (eject_arm == 1) {
                     eject_request(1);
                     eject_arm = 0;

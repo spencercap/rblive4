@@ -12,6 +12,7 @@ A **MOD** tab sits at the top center of the screen. Taps on the tab and its pane
 - **JOG** is jog sensitivity for both decks, shown as −, the percent, and +. It starts at 40% of the original calibration, steps by 10% between 20% and 200%, and is kept in `/tmp/rb-overlay` until the device reboots.
 - **WAVE** is **BLUE**, **RGB**, or **3 BAND**, and it recolors the waveform that is already on screen. On this player, tapping the waveform does not open the RX3 shortcut, so the choice is on the MOD panel.
 - **QUANT** is deck quantize for both decks, **ON** or **OFF**. This is the QUANT button (`UiSetQuantizeOnOff`), so **OFF** lets cue land off the beat grid. The settings entry "quantize beat value" only changes the grid size and leaves snapping on.
+- **TRACK** sits above EJECT. **TAG** adds the highlighted track to the Tag List (`0x420e`). **TAGS** opens the Tag List (`0x0203`). **FIND** opens Search (`0x0205`). TAGS and FIND close the panel so that screen is visible.
 - **EJECT** names the row. The two USB slots are already shown, each labeled with a shortened volume name. Tapping a slot turns that half into **YES**. Only the **YES** tap ejects that stick. Closing the menu clears a pending **YES**.
 - **POWER** sits on the last row. The first tap turns the row green and shows **YES**. The second tap asks the launcher to eject both sticks, then power the unit off. Closing the menu before **YES** cancels it.
 
@@ -27,6 +28,12 @@ A **MOD** tab sits at the top center of the screen. Taps on the tab and its pane
 Slot 2 uses `/media/usb4/sda1` because that is the player's USB 2 mass-storage path. Volume labels are written to `/tmp/usb-name-1` and `/tmp/usb-name-2` for the MOD buttons. An eject request is `/tmp/usb-eject-1` or `/tmp/usb-eject-2`. After a clean eject, that slot stays released until the disk disappears, so the stick is not mounted again while it is still plugged in.
 
 `knobshim` treats USB 2 as present only when `/media/usb4/sda1` contains a rekordbox `export.pdb`. Otherwise it clears the phantom USB 2 flag that was hiding the USB 1 label.
+
+### Browse
+
+The unused LIGHTING button (global note 39, under MENU) opens Tag List on a short press (`0x0203`) and Search on a hold of about 600 ms (`0x0205`). Search is the browse screen with the on-screen keyboard.
+
+A short tap of FWD still opens Source. Holding FWD for about 600 ms sends `0x420e` (`UiKey_AddTag`), which adds the highlighted browse track to the Tag List.
 
 ### Beat FX
 
