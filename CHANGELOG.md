@@ -8,6 +8,8 @@ Differences from [erhan-/rblive4](https://github.com/erhan-/rblive4), forked at 
 
 A **MOD** tab sits at the top center of the screen. Taps on the tab and its panel stay in the overlay and are not passed to the player. Each row names the setting on the left, then the value. Green marks the current play mode and waveform color.
 
+<img src="docs/mod-menu.png" alt="MOD menu" width="360"/>
+
 - **MODE** is the play mode. Each tap cycles **SINGLE**, **CONTINUE**, **REPEAT**, and **ALL REPEAT**, using the same `UiSetUtilAutoPlayMode` call as the RX3 utility screen. The choice is written back to `XdjSettings.dat`.
 - **JOG** is jog sensitivity for both decks, shown as −, the percent, and +. It starts at 40% of the original calibration, steps by 10% between 20% and 200%, and is kept in `/tmp/rb-overlay` until the device reboots.
 - **WAVE** is **BLUE**, **RGB**, or **3 BAND**, and it recolors the waveform that is already on screen. On this player, tapping the waveform does not open the RX3 shortcut, so the choice is on the MOD panel.

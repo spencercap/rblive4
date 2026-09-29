@@ -5,6 +5,7 @@ see [CHANGELOG.md](https://github.com/spencercap/rblive4/blob/main/CHANGELOG.md)
 - ✅ Loop encoders work
 - 👾 added new MOD overlay panel for changing things previously unavailable (quantize on/off, safe eject USBs, etc)
 <img src="docs/rkb-scl4.png" alt="" width="720"/>
+<img src="docs/mod-menu.png" alt="" width="360"/>
 
 ---
 
