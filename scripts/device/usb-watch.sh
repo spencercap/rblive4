@@ -15,7 +15,7 @@
 #
 # Never write to /tmp/udev_usbctn* ("connect" there pops "USB Error").
 #
-# Usage:  sh /data/usb-watch.sh start|stop|status|run
+# Usage:  sh /data/usb-watch.sh start|stop|status|run|release
 # Env:    USBWATCH_BUSES="1 2 3"   USBWATCH_POLL=1
 # =============================================================================
 
@@ -273,6 +273,12 @@ run() {
   done
 }
 
+# Same detach the MOD eject buttons use, both slots, from the launcher.
+release() {
+  detach 1
+  detach 2
+}
+
 start() {
   if [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null; then
     echo "already running (pid $(cat "$PIDFILE"))"
@@ -309,5 +315,6 @@ case "$1" in
   stop)   stop ;;
   status) status ;;
   run)    run ;;
-  *) echo "usage: $0 start|stop|status"; exit 1 ;;
+  release) release ;;
+  *) echo "usage: $0 start|stop|status|release"; exit 1 ;;
 esac

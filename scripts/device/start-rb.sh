@@ -63,9 +63,41 @@ done
 # 9. Start USB watcher once rbp is ready
 sh /data/usb-watch.sh start 2>/dev/null
 
+# Host mounts and the chroot binds the player actually reads.
+slots_busy() {
+  mountpoint -q /media/usb1/sda1 && return 0
+  mountpoint -q /media/usb4/sda1 && return 0
+  mountpoint -q /data/rbx3-run/media/usb1/sda1 && return 0
+  mountpoint -q /data/rbx3-run/media/usb4/sda1 && return 0
+  return 1
+}
+
+# Ask the watcher for the same detach the MOD eject buttons use, then
+# power off only after both sticks are unmounted.
+poweroff_clean() {
+  rm -f /tmp/rb-poweroff
+  : > /tmp/usb-eject-1
+  : > /tmp/usb-eject-2
+  n=0
+  while slots_busy && [ "$n" -lt 8 ]; do
+    sleep 1
+    n=$((n + 1))
+  done
+  if slots_busy; then
+    sh /data/usb-watch.sh release
+  fi
+  sh /data/usb-watch.sh stop
+  sync
+  systemctl poweroff
+  exit 0
+}
+
 # 10. Wait while rbp is running (so launcher does not redraw on top of rbp)
 if [ -n "$RBP" ]; then
   while kill -0 $RBP 2>/dev/null; do
+    if [ -f /tmp/rb-poweroff ]; then
+      poweroff_clean
+    fi
     sleep 2
   done
 fi

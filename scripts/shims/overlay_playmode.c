@@ -62,6 +62,7 @@
 #define USB_NAME2     "/tmp/usb-name-2"
 #define USB_PULL1     "/tmp/usb-pull-1"
 #define USB_PULL2     "/tmp/usb-pull-2"
+#define POWER_REQ     "/tmp/rb-poweroff"
 
 /* Upright 1280x800 layout, top center. */
 #define TAB_W 80
@@ -70,7 +71,7 @@
 #define TAB_Y 8
 
 #define PAN_W 260
-#define PAN_H 216
+#define PAN_H 260
 #define PAN_X ((1280 - PAN_W) / 2)
 #define PAN_Y 48
 
@@ -97,6 +98,8 @@
 #define USB_HALF ((BTN_W - USB_GAP) / 2)
 #define USB_L_X BTN_X
 #define USB_R_X (BTN_X + USB_HALF + USB_GAP)
+#define PWR_Y  260
+#define PWR_H  36
 
 #define COL_TAB    0xff1c2128u
 #define COL_PANEL  0xff121418u
@@ -383,6 +386,7 @@ static int pull1, pull2;
 /* 0 = one full-width EJECT. 1 = both slots. 2 = confirm on the chosen slot. */
 static int eject_open;
 static int eject_arm;
+static int power_arm;
 
 static void read_file(const char *path, char *dst, int cap)
 {
@@ -422,6 +426,14 @@ static void eject_request(int slot)
         close(fd);
     }
     olog(slot == 1 ? "overlay: eject 1\n" : "overlay: eject 2\n");
+}
+
+static void power_request(void)
+{
+    int fd = open(POWER_REQ, O_WRONLY | O_CREAT | O_TRUNC, 0666);
+    if (fd >= 0)
+        close(fd);
+    olog("overlay: poweroff\n");
 }
 
 /* Four letters of the volume label, then "..." when the name is longer.
@@ -734,6 +746,10 @@ void overlay_paint(int fb_fd, unsigned yoffset)
         else
             draw_volume(base, USB_R_X, USB_Y, USB_HALF, USB_H, name2, "USB 2", pull2);
     }
+
+    fill_visual(base, BTN_X, PWR_Y, BTN_W, PWR_H, power_arm ? COL_ON : COL_BTN);
+    draw_text_centered(base, BTN_X, PWR_Y, BTN_W, PWR_H,
+                       power_arm ? "YES" : "POWER", COL_TEXT);
 }
 
 int overlay_touch(int down, int was_down, int lx, int ly)
@@ -741,7 +757,7 @@ int overlay_touch(int down, int was_down, int lx, int ly)
     int vx = 1279 - lx;
     int vy = ly;
     int on_tab, on_panel, on_mode, on_jog_dn, on_jog_up;
-    int on_eject, on_usb1, on_usb2, on_blue, on_rgb, on_band;
+    int on_eject, on_usb1, on_usb2, on_blue, on_rgb, on_band, on_power;
     int fresh;
     unsigned long long now;
     static unsigned long long last_ev_ms;
@@ -769,6 +785,7 @@ int overlay_touch(int down, int was_down, int lx, int ly)
         on_eject = in_rect(vx, vy, BTN_X, USB_Y, BTN_W, USB_H);
         on_usb1 = in_rect(vx, vy, USB_L_X, USB_Y, USB_HALF, USB_H);
         on_usb2 = in_rect(vx, vy, USB_R_X, USB_Y, USB_HALF, USB_H);
+        on_power = in_rect(vx, vy, BTN_X, PWR_Y, BTN_W, PWR_H);
         if (!ov_is_open()) {
             ov_grab = on_tab;
             if (on_tab) {
@@ -777,6 +794,7 @@ int overlay_touch(int down, int was_down, int lx, int ly)
                 ov_wave_cur = 0;
                 eject_open = 0;
                 eject_arm = 0;
+                power_arm = 0;
             }
         } else {
             ov_grab = 1;
@@ -784,6 +802,7 @@ int overlay_touch(int down, int was_down, int lx, int ly)
                 ov_set_open(0);
                 eject_open = 0;
                 eject_arm = 0;
+                power_arm = 0;
             }
             else if (on_mode) {
                 int next = ov_mode + 1;
@@ -819,10 +838,16 @@ int overlay_touch(int down, int was_down, int lx, int ly)
                     eject_arm = 0;
                 } else
                     eject_arm = 2;
+            } else if (on_power) {
+                if (power_arm)
+                    power_request();
+                else
+                    power_arm = 1;
             } else if (!on_panel) {
                 ov_set_open(0);
                 eject_open = 0;
                 eject_arm = 0;
+                power_arm = 0;
             }
         }
     }
