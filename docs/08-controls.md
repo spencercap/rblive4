@@ -92,10 +92,12 @@ master-cue function instead (see below).
 |---|---|---|
 | FX activate | note 26 | `0x448d` K_BFX (LED = LedStat 48, blinks while active) |
 | Wet/dry knob | CC 4 | `0x448f` K_DEPTH |
-| **Channel assign** | **note 40**, velocity = position | `0x448c` K_BFXCH |
+| **Channel assign** | **note 40**, velocity = position | `0x448c` K_BFXCH plus `DjEngineIF::setBeatEffectSelectChannel` |
 | **Effect select** | **CC 35**, relative (1 = +1, 127 = −1) | `0x448b` K_BFXTYPE |
-| **Time / parameter** | **CC 36**, relative (1 = +1, 127 = −1) | `0x448e` K_TIME |
-| **BEAT < / >** | hold **note 25** (TIME-knob push) + turn CC 36 | `0x4490` / `0x4491` |
+| **TIME encoder turn** | **CC 36**, relative | depends on encoder mode (below) |
+| **TIME encoder push** | **note 25**, short tap | cycle encoder mode: **BEAT → TIME → BPM** |
+| **BEAT < / >** | hold **note 25** (or SHIFT) + turn CC 36 | `0x4490` / `0x4491` (momentary, any mode) |
+| **FX SELECT hold** | **note 30** held ~600 ms | Beat FX BPM detect mode **AUTO** (follow master/source BPM) |
 
 #### Channel assign
 
@@ -112,6 +114,11 @@ The panel sends the position as the **note-on velocity of note 40**
 So: **Ch1 → 0, Ch2 → 1, Main → 5**. Ch3/Ch4 are inert — rbp has only two
 players, so there is nothing to route them to.
 
+The UI key (`K_BFXCH`, OP_VALUE) updates the on-screen channel indicator.
+The audio route is applied with `DjEngineIF::setBeatEffectSelectChannel`
+(`0x4d264`) as well, because the OP_VALUE payload from a MIDI velocity
+does not always change the engine assignment.
+
 #### Effect select
 
 `onEv_BeatEffectType(SW_BFX_TYPE)` is a **14-position switch** whose positions
@@ -126,15 +133,27 @@ rbp's panel encoder is endless, so the shim keeps a cursor over the 14
 positions, seeds it from the current effect (`getBeatEffectType()` inverted
 through the table above), and sends the position as `K_BFXTYPE`.
 
-#### Time / parameter and BEAT < / >
+#### TIME encoder modes (BPM / ms / beat)
+
+The on-screen Beat FX row shows **BPM**, **time (ms)**, and **beat fraction**.
+A short push of the TIME encoder (note 25) cycles which of those the
+encoder turn (CC 36) edits. The default is **BEAT**.
+
+| Mode | Turn CC 36 | rbp |
+|---|---|---|
+| **BEAT** | BEAT `<` / `>` | `0x4490` / `0x4491` OP_PRESS |
+| **TIME** | delay/parameter in ms | `0x448e` K_TIME, OP_ROTATE |
+| **BPM** | whole-BPM step | `setBfxBpmDetectMode(TAP)` then `adjustBfxBpm(false, ±1)` |
+
+Hold TIME (or SHIFT) and turn still forces BEAT `<` / `>` without changing
+the stored mode.
+
+Hold **FX SELECT** (note 30) for 600 ms to put BPM detection back in
+**AUTO**, so the displayed FX BPM follows the current master/source deck.
 
 `onEv_BeatFxTime` → `BeatFxTimeKnob(value, absolute)` is called with
 **absolute = false**, so the argument is a **rotation delta**, not a position —
 rbp itself steps and clamps it (it adds `value * 13` to the current percent).
-
-`onEv_BeatFxBeat` (the BEAT `<` / `>` buttons) behaves the same way, and the
-SC Live 4 has no such buttons — holding the TIME knob's push and turning it
-sends them (-1 = halve, +1 = double). SHIFT + TIME works too.
 
 **Op codes matter here.** `ui::Mixer::asEventCode` maps
 `0x448e → 0x2014` (any op), but gates the BEAT buttons:
@@ -145,19 +164,25 @@ sends them (-1 = halve, +1 = double). SHIFT + TIME works too.
 
 so they are sent with **OP_PRESS**.
 
-### Beat-loop knob — experimental
+### Beat-loop encoder
 
-The RX3 has no beat-loop knob (its pads trigger loops). The SC Live 4 knob is
-wired behind `BEATLOOP=1` because the safe path depends on rbp's pad mode (see
-below). rbp exposes the underlying machinery:
+The RX3 has no beat-loop knob (its pads trigger loops). On the SC Live 4 the
+per-deck encoder (CC 32) and its push (note 39) drive
+`DjEngineIF::setAutoBeatLoop` / `exitLoop` directly, gated by `BEATLOOP=1`
+(the launcher sets that). Pad mode is not used: sending pad keys while rbp
+was in CUES could fire a hot cue.
 
-```
-PlayerInnards::execAutoBeatLoop(short padIndex, bool)        @0x300c64
-  pad index -> size code via a per-mode table, then
-  DjEngineIF::setAutoBeatLoop(ch, StAutoBeatLoop{numer,denom}, int, bool, bool)
-```
+Push **toggles** a latched loop (mode 0). Performance-pad mode 1 kept a slip
+timeline, so exit jumped forward in the track. `exitLoop(ch, false, false)`
+matches rbp's RELOOP/EXIT path.
 
-Size tables (base `0x4d3850`, codes resolved to beats):
+Turn selects length. Default is **16 beats**. Range:
+
+**128, 64, 32, 16, 8, 4, 2, 1, 1/2, 1/4, 1/8, 1/16, 1/32**
+
+If a loop is already running, a turn applies the new length immediately.
+
+The pad-mode size tables below are still what rbp uses for its LOOP pads:
 
 | selector | 8 sizes |
 |---|---|
@@ -165,24 +190,12 @@ Size tables (base `0x4d3850`, codes resolved to beats):
 | pad mode 1, `[this+0x7a] != 0` | 4/3, 1, 2/3, 1/3, 1/5, 1/6, 1/7, 1/9 |
 | pad mode 2 (SLIP) | 16, 8, 4, 2, 1, 1/2, 3, 4/3 |
 
-`ui::PlayerInnards` is **not** reachable via `IUiObjManager::getPlayer()` (that
-returns `ui::Player`, channel byte 1/2). It is found by scanning writable
-mappings for its vptr, which is **`vtable+8`** (`0x4d1960`), then validating
-`+0x26` (channel 2/3), `+0x74` (pad mode) and `+0x30` (engine ptr).
-
-The pad keycode (`K_PAD1..8`) is only a beat loop **while rbp is in its
-AUTO/LOOPS pad mode**; `execAutoBeatLoop()` called directly from the shim's MIDI
-thread does not run the loop. The whole path is therefore gated behind
-`BEATLOOP=1`; the reliable workflow is to select rbp's LOOPS pad mode and drive
-the pad keycodes from the knob.
-
 ### Not mapped
 
-* Beat-loop knob — experimental, `BEATLOOP=1` (above).
 * Parameter (23/24), Layer (31), StopTime (CC 37), Thru (note 15) — no
   direct rbp keycode, or needs a distinct param.
-* SHIFT (note 28 per deck) is tracked and used for the BEAT < / > combo; other
-  shift-actions are not wired.
+* SHIFT (note 28 per deck) is tracked for the BEAT `<` / `>` combo while
+  TIME is held; other shift-actions are not wired.
 * Pad-mode LEDs (11–13) and pad colours.
 
 ## LED output (SC Live 4 panel)

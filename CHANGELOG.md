@@ -29,9 +29,25 @@ Slot 2 uses `/media/usb4/sda1` because that is the player's USB 2 mass-storage p
 
 `knobshim` treats USB 2 as present only when `/media/usb4/sda1` contains a rekordbox `export.pdb`. Otherwise it clears the phantom USB 2 flag that was hiding the USB 1 label.
 
+### Beat FX
+
+The FX assign knob drives both the on-screen channel (`K_BFXCH`) and
+`DjEngineIF::setBeatEffectSelectChannel`, so Ch1 / Ch2 / Main actually change
+the audio route. A short push of TIME cycles **BEAT → TIME → BPM** (default
+BEAT). Hold TIME and turn still sends BEAT `<` / `>`. Hold FX SELECT (~600 ms)
+puts Beat FX BPM detect back in AUTO so it follows the master/source deck.
+
+### Beat loop
+
+`BEATLOOP=1` is on by default. The per-deck encoder uses latched
+`setAutoBeatLoop` (mode 0), not pad keys. Push toggles with `exitLoop` so
+playback does not jump. Default length is 16 beats; the range is 128 down to
+1/32.
+
 ### Launch
 
-`start-rb.sh` starts the player with `BEATLOOP=1`.
+`start-rb.sh` starts the player with `BEATLOOP=1`. MIDI/jog/tempo debug
+logging is off unless `KNOB_VERBOSE`, `JOG_VERBOSE`, or `TEMPO_VERBOSE` is set.
 
 ### Build
 

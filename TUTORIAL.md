@@ -111,5 +111,6 @@ systemctl start engine.service
 * Speaker volume knob control is not used — a fixed level is set with
   `SPEAKER_GAIN` ([docs/09](docs/09-audio.md)).
 * DJ FX parameter/layer encoders, TrackSkip, BeatJump and some SHIFT-actions
-  are not mapped ([docs/08](docs/08-controls.md)).
+  are not mapped ([docs/08](docs/08-controls.md)). Beat FX assign, type, TIME
+  modes, and the beat-loop encoder are mapped.
 * No autostart unit; launch `start-rb.sh` manually ([docs/11](docs/11-runtime-launcher.md)).

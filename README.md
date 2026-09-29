@@ -45,7 +45,8 @@ unchanged.
 * The speaker/booth level is fixed via `SPEAKER_GAIN`; the panel knob is not
   used.
 * DJ FX parameter / layer encoders, StopTime and some shift actions are not
-  mapped.
+  mapped. Beat FX channel, type, TIME (beat/ms/BPM), ON, and the beat-loop
+  encoder are mapped.
 * Pad RGB colours and pad-mode LEDs are not driven.
 * Autostart is not provided; the launcher is run manually.
 

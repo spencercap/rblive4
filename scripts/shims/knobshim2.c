@@ -72,8 +72,7 @@
  *   LED_DISABLE=1   do not drive the panel LEDs at all
  *   LED_DEBUG_LOOP=1 log rbp loop state (loop/canrel/armed/adjust) on change
  *   LED_DUMP=1      dump rbp's whole LedStat table (id/ch/state) on change
- *   BEATLOOP=1      enable the experimental beat-loop knob path
- *                   (see docs/08-controls.md)
+ *   BEATLOOP=1      enable the beat-loop encoder (latched engine loops)
  */
 #define _GNU_SOURCE
 #include <stdio.h>
@@ -492,9 +491,23 @@ static unsigned long long now_ms(void)
 static int knob_pos = -1;
 static int shift_down = 0;
 
-/* TIME knob push (ch15 note 25) held: turning the TIME knob then acts as the
- * RX3's BEAT < / BEAT > buttons instead of changing the time. */
-static int fx_time_btn = 0;
+/* FX TIME encoder modes. A short push cycles BEAT -> TIME -> BPM. Holding
+ * TIME while turning remains a momentary BEAT modifier. */
+enum fx_encoder_mode {
+     FX_ENC_BEAT = 0,
+     FX_ENC_TIME,
+     FX_ENC_BPM
+};
+static volatile int fx_encoder_mode = FX_ENC_BEAT;
+static volatile int fx_time_btn;
+static volatile int fx_time_rotated;
+
+/* Holding the FX SELECT encoder returns Beat FX BPM detection to AUTO, which
+ * follows rbp's current master/source BPM. */
+#define FX_SELECT_HOLD_MS 600
+static volatile int fx_select_held;
+static volatile int fx_select_hold_fired;
+static unsigned long long fx_select_press_ms;
 
 /* "loop-in armed" latch per deck (0 = deck 1), driven by the LOOP IN/OUT keys;
  * the LED bridge turns it into the SC Live 4 blink pattern. */
@@ -693,8 +706,9 @@ static void handle_note(int ch, int note, int on)
       * ch6/7 speaker output only (rbp/booth/monitors unaffected). */
      if (ch == 15 && note == 41) {
           g_speaker_on = on ? 1 : 0;
-          klog("knobshim2: speaker switch note41 velocity-on=%d -> speakers %s\n",
-               on, g_speaker_on ? "ON" : "OFF");
+          if (verbose)
+               klog("knobshim2: speaker switch note41 velocity-on=%d -> speakers %s\n",
+                    on, g_speaker_on ? "ON" : "OFF");
           return;
      }
 
@@ -705,8 +719,9 @@ static void handle_note(int ch, int note, int on)
                int cur = me_get_master_cue();
                int want = (cur == 0) ? 1 : 0;
                me_set_master_cue(want);
-               klog("knobshim2: master cue (strip %d) -> %s\n",
-                    ch + 1, want ? "ON" : "OFF");
+               if (verbose)
+                    klog("knobshim2: master cue (strip %d) -> %s\n",
+                         ch + 1, want ? "ON" : "OFF");
           }
           return;
      }
@@ -716,15 +731,40 @@ static void handle_note(int ch, int note, int on)
      if (ch == 15 && note == 11) {
           g_split_cue = on ? 1 : 0;
           me_set_stereo(g_split_cue ? 0 : 1);
-          klog("knobshim2: split cue note11 velocity-on=%d -> split %s\n",
-               on, g_split_cue ? "ON" : "OFF");
+          if (verbose)
+               klog("knobshim2: split cue note11 velocity-on=%d -> split %s\n",
+                    on, g_split_cue ? "ON" : "OFF");
           return;
      }
 
      if ((ch == 4 || ch == 5) && note == 28)
           shift_down = on;
-     if (ch == 15 && note == 25)
-          fx_time_btn = on;
+     if (ch == 15 && note == 25) {
+          if (on) {
+               fx_time_btn = 1;
+               fx_time_rotated = 0;
+          } else {
+               fx_time_btn = 0;
+               if (!fx_time_rotated) {
+                    fx_encoder_mode = (fx_encoder_mode + 1) % 3;
+                    if (verbose)
+                         klog("knobshim2: FX TIME mode -> %s\n",
+                              fx_encoder_mode == FX_ENC_BEAT ? "BEAT" :
+                              fx_encoder_mode == FX_ENC_TIME ? "TIME" : "BPM");
+               }
+          }
+          return;
+     }
+     if (ch == 15 && note == 30) {
+          if (on) {
+               fx_select_held = 1;
+               fx_select_hold_fired = 0;
+               fx_select_press_ms = now_ms();
+          } else {
+               fx_select_held = 0;
+          }
+          return;
+     }
 
      /* SC Live 4 global Sound Color FX select (ch15 notes 21..24) -> both mixer
       * channels (Filter/DubEcho/Noise/Sweep). */
@@ -1050,6 +1090,14 @@ static void handle_pitch(int ch, int cc, int val)
  */
 #define BFX_TYPE_POSITIONS 14
 #define ADDR_GET_BFX_TYPE  0x4d514
+#define DJENGINEIF_GLOBAL  0x02686178UL
+#define ADDR_SET_BFX_CH    0x4d264
+#define ADDR_GET_BFX_CH    0x4d3bc
+#define ADDR_SET_BPM_MODE  0x4e284
+#define ADDR_GET_BPM_MODE  0x4e28c
+#define ADDR_ADJUST_BPM    0x4e2a8
+#define ADDR_GET_BPM       0x4e2b0
+#define ADDR_NOTIFY_BPM    0x4d90c
 
 /* inverse of the switch table above: internal type -> switch position */
 static const signed char bfx_type_to_pos[15] = {
@@ -1062,6 +1110,9 @@ static volatile int g_bfxch_user_set;  /* user moved the assign knob */
 static void handle_fx_assign(int vel)
 {
      int param;
+     void *dj;
+     int before = -1;
+     int after = -1;
      switch (vel) {
      case 1:   param = 0; break;        /* Channel 1 -> PLAYER_0 */
      case 2:   param = 1; break;        /* Channel 2 -> PLAYER_1 */
@@ -1073,9 +1124,22 @@ static void handle_fx_assign(int vel)
           return;
      }
      g_bfxch_user_set = 1;
+     dj = *(void **)DJENGINEIF_GLOBAL;
+     if (dj)
+          before = ((int (*)(void *))ADDR_GET_BFX_CH)(dj);
+
+     /* Keep the normal UI event so rbp updates its channel indicator, but
+      * also call the engine setter directly.  The SC Live 4 selector carries
+      * its position in note velocity, while rbp's OP_VALUE event path expects
+      * a native switch payload and can leave the audio route unchanged. */
      send_rx_key(K_BFXCH, OP_VALUE, CH_GLOBAL, param);
+     if (dj) {
+          ((void (*)(void *, int))ADDR_SET_BFX_CH)(dj, param);
+          after = ((int (*)(void *))ADDR_GET_BFX_CH)(dj);
+     }
      if (verbose)
-          klog("knobshim2: fx assign vel=%d -> BFXCH %d\n", vel, param);
+          klog("knobshim2: fx assign vel=%d -> BFXCH %d (engine %d -> %d)\n",
+               vel, param, before, after);
 }
 
 static void handle_fx_select(int val)
@@ -1101,12 +1165,14 @@ static void handle_fx_select(int val)
 static void handle_fx_time(int val)
 {
      int d = (val == 127) ? -1 : (val == 1 ? 1 : 0);
+     void *dj;
      if (!d)
           return;
      /* TIME-knob push (or SHIFT) + TIME knob = the RX3's BEAT < / BEAT >
       * buttons, which the SC Live 4 does not have.  rbp: onEv_BeatFxBeat(long)
       * with -1 = halve, +1 = double the beat fraction. */
      if (shift_down || fx_time_btn) {
+          fx_time_rotated = 1;
           int key = (d < 0) ? K_BEATPREV : K_BEATNEXT;
           /* ui::Mixer::asEventCode only produces the BEAT events for
            * 0x4490/0x4491 when the op is PRESS (0):
@@ -1116,6 +1182,28 @@ static void handle_fx_time(int val)
           if (verbose)
                klog("knobshim2: shift+time -> %s\n",
                     (d < 0) ? "BEAT<" : "BEAT>");
+          return;
+     }
+     if (fx_encoder_mode == FX_ENC_BEAT) {
+          int key = (d < 0) ? K_BEATPREV : K_BEATNEXT;
+          send_rx_key_fl(key, OP_PRESS, CH_GLOBAL, d, 0.0f, d);
+          if (verbose)
+               klog("knobshim2: FX TIME encoder BEAT %s\n",
+                    d < 0 ? "<" : ">");
+          return;
+     }
+     if (fx_encoder_mode == FX_ENC_BPM) {
+          dj = *(void **)DJENGINEIF_GLOBAL;
+          if (!dj)
+               return;
+          /* Mode 1 is manual/TAP. false selects whole-BPM rather than 0.1 BPM
+           * adjustment; notify refreshes the visible BPM-dependent values. */
+          ((int (*)(void *, int))ADDR_SET_BPM_MODE)(dj, 1);
+          ((int (*)(void *, int, int))ADDR_ADJUST_BPM)(dj, 0, d);
+          ((void (*)(void *, int))ADDR_NOTIFY_BPM)(dj, 1);
+          if (verbose)
+               klog("knobshim2: FX TIME encoder BPM step=%d bpm=%d\n", d,
+                    ((int (*)(void *))ADDR_GET_BPM)(dj));
           return;
      }
      /* plain turn: rbp's onEv_BeatFxTime(long) -> BeatFxTimeKnob(value,
@@ -1150,12 +1238,17 @@ static void handle_fx_time(int val)
  *   player = arr[ch-1]     (UiObject::Channel is 1-based)
  */
 #define ADDR_EXEC_AUTOBEATLOOP 0x300c64
+#define ADDR_SET_AUTOBEATLOOP  0x48f40
+#define ADDR_IS_AUTOBEATLOOP   0x490f8
+#define ADDR_IS_SLIPPING       0x4af78
+#define ADDR_EXIT_LOOP         0x480c4
 #define UIOBJ_HOLDER_GLOBAL    0x026867c0UL   /* *(here) = IUiObjManager */
 #define UIOBJ_PLAYERS_OFF      64
 #define UIOBJ_NPLAYERS_OFF     72
 #define PLAYERINNARDS_CHAN_OFF 0x26
 #define PLAYERINNARDS_MODE_OFF 0x74
-#define ALOOP_POSITIONS        8
+#define ALOOP_POSITIONS        13
+#define ALOOP_DEFAULT_IDX      3       /* 16 beats */
 
 /* playengine::PlayEngine singleton + isLooping(EnPlayerChannel) (see the LED
  * section below, which defines these later in the file) */
@@ -1250,21 +1343,45 @@ static int aloop_is_looping(int deck)
               (*(void **)ALOOP_PLAYENGINE_GLOBAL, deck);
 }
 
-/* Apply a loop length: set rbp's pad mode/table, then trigger the pad key.
- *
- * WARNING: only meaningful while rbp is actually in its AUTO/LOOPS pad mode.
- * rbp's UI re-asserts its own pad mode, so forcing the byte is not enough -
- * the pad key then fires a HOT CUE instead of a beat loop, which is
- * destructive.  Until that is solved this is gated behind BEATLOOP=1. */
+/* Apply a latched auto beat loop via DjEngineIF (mode 0). Gated by BEATLOOP=1. */
 static int aloop_enabled = -1;
 
 static void aloop_apply(int deck, void *p, int idx)
 {
+     struct auto_loop_size {
+          unsigned short numer;
+          unsigned short denom;
+     };
+     static const struct auto_loop_size sizes[ALOOP_POSITIONS] = {
+          { 128, 1 }, { 64, 1 }, { 32, 1 }, { 16, 1 },
+          { 8, 1 }, { 4, 1 }, { 2, 1 }, { 1, 1 },
+          { 1, 2 }, { 1, 4 }, { 1, 8 }, { 1, 16 }, { 1, 32 }
+     };
+     void *dj;
+     int active;
+
      if (!aloop_enabled)
           return;
-     force_auto_padmode(p);
-     send_rx_key(K_PAD1 + idx, OP_PRESS, deck + 1, 0);
-     send_rx_key(K_PAD1 + idx, OP_RELEASE, deck + 1, 0);
+     if (idx < 0 || idx >= ALOOP_POSITIONS)
+          return;
+     dj = *(void **)DJENGINEIF_GLOBAL;
+     if (!dj) {
+          if (verbose)
+               klog("knobshim2: beat loop deck%d: no DjEngineIF\n", deck + 1);
+          return;
+     }
+
+     /* Bypass pad mode completely.  This is the same engine call made by
+      * PlayerInnards::execAutoBeatLoop after it translates a pad index:
+      * Mode 0 creates a latched loop. Mode 1 is the performance-pad press
+      * mode and keeps an underlying slip timeline, causing exit to jump. */
+     ((int (*)(void *, int, const struct auto_loop_size *, int, int, int))
+          ADDR_SET_AUTOBEATLOOP)(dj, deck, &sizes[idx], 0, 1, 0);
+     active = ((int (*)(void *, int))ADDR_IS_AUTOBEATLOOP)(dj, deck);
+     if (verbose)
+          klog("knobshim2: beat loop deck%d direct %u/%u active=%d slipping=%d\n",
+               deck + 1, sizes[idx].numer, sizes[idx].denom, active,
+               ((int (*)(void *, int))ADDR_IS_SLIPPING)(dj, deck));
 }
 
 /* knob turn: change the selected loop length; if a loop is running, apply it
@@ -1272,12 +1389,10 @@ static void aloop_apply(int deck, void *p, int idx)
 static void handle_aloop(int deck, int val)
 {
      static int last[2] = { -1, -1 };
-     void *p;
      int d;
 
      /* relative encoder: 127 = counter-clockwise = SHORTER, 1 = clockwise =
-      * LONGER.  Index 0 is the longest loop (4 beats), index 7 the shortest
-      * (1/32), so "shorter" means a higher index. */
+      * LONGER. Index 0 is 128 beats and the last index is 1/32. */
      if (val == 127)
           d = 1;
      else if (val == 1)
@@ -1292,7 +1407,7 @@ static void handle_aloop(int deck, int val)
           return;
 
      if (g_aloop_idx[deck] < 0)
-          g_aloop_idx[deck] = 0;                 /* default 4 beats */
+          g_aloop_idx[deck] = ALOOP_DEFAULT_IDX;
      g_aloop_idx[deck] += d;
      if (g_aloop_idx[deck] < 0)
           g_aloop_idx[deck] = 0;
@@ -1305,39 +1420,33 @@ static void handle_aloop(int deck, int val)
                     deck + 1, g_aloop_idx[deck]);
           return;
      }
-     p = plinn(deck);
-     if (!p)
-          return;
-     aloop_apply(deck, p, g_aloop_idx[deck]);
+     aloop_apply(deck, NULL, g_aloop_idx[deck]);
      if (verbose)
           klog("knobshim2: beat loop deck%d -> idx=%d (was looping), now=%d\n",
                deck + 1, g_aloop_idx[deck], aloop_is_looping(deck));
 }
 
-/* button push: engage a beat loop of the selected length */
+/* Button push toggles the loop.  exitLoop(..., false, false) is the same
+ * non-slip exit used by rbp's RELOOP/EXIT handler. */
 static void handle_aloop_button(int deck)
 {
-     void *p;
+     void *dj;
      if (g_aloop_idx[deck] < 0)
-          g_aloop_idx[deck] = 0;                 /* default 4 beats */
-     p = plinn(deck);
-     if (!p) {
+          g_aloop_idx[deck] = ALOOP_DEFAULT_IDX;
+     dj = *(void **)DJENGINEIF_GLOBAL;
+     if (aloop_is_looping(deck)) {
+          if (dj)
+               ((int (*)(void *, int, int, int))ADDR_EXIT_LOOP)
+                    (dj, deck, 0, 0);
           if (verbose)
-               klog("knobshim2: beat loop deck%d push: no PlayerInnards\n",
-                    deck + 1);
+               klog("knobshim2: beat loop deck%d push: exit, looping=%d\n",
+                    deck + 1, aloop_is_looping(deck));
           return;
      }
-     {
-          int m0 = *(volatile unsigned char *)((char *)p + PLAYERINNARDS_MODE_OFF);
-          aloop_apply(deck, p, g_aloop_idx[deck]);
-          if (verbose)
-               klog("knobshim2: beat loop deck%d push idx=%d mode_before=%d "
-                    "looping=%d chan=%d\n",
-                    deck + 1, g_aloop_idx[deck], m0, aloop_is_looping(deck),
-                    *(volatile unsigned char *)((char *)p +
-                                                PLAYERINNARDS_CHAN_OFF));
-          return;
-     }
+     aloop_apply(deck, NULL, g_aloop_idx[deck]);
+     if (verbose)
+          klog("knobshim2: beat loop deck%d push idx=%d looping=%d\n",
+               deck + 1, g_aloop_idx[deck], aloop_is_looping(deck));
 }
 
 static void handle_event(const struct snd_seq_event *ev)
@@ -2561,6 +2670,21 @@ static void *sync_hold_thread(void *arg)
                     if (verbose)
                          klog("knobshim2: deck%d SYNC held -> MASTER 0x4111\n",
                               d + 1);
+               }
+          }
+          if (fx_select_held && !fx_select_hold_fired &&
+              now_ms() - fx_select_press_ms >= FX_SELECT_HOLD_MS) {
+               void *dj = *(void **)DJENGINEIF_GLOBAL;
+               fx_select_hold_fired = 1;
+               if (dj) {
+                    /* AUTO mode follows rbp's selected/master deck BPM. */
+                    ((int (*)(void *, int))ADDR_SET_BPM_MODE)(dj, 0);
+                    ((void (*)(void *, int))ADDR_NOTIFY_BPM)(dj, 1);
+                    if (verbose)
+                         klog("knobshim2: FX SELECT held -> BPM AUTO "
+                              "(mode=%d bpm=%d)\n",
+                              ((int (*)(void *))ADDR_GET_BPM_MODE)(dj),
+                              ((int (*)(void *))ADDR_GET_BPM)(dj));
                }
           }
           usleep(20000);   /* 50 Hz */
