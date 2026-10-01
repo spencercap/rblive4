@@ -2,12 +2,23 @@
 # start-rb.sh — launch the XDJ-RX3 rekordbox player on the Denon SC Live 4.
 # Adapted from PrimeBox (the SC Live 4 runs the same Buildroot/systemd base).
 
+# Every process as "pid cmdline". Not ps: on firmware 5.x ps is procps, and
+# BSD-style "ps w" lists only processes on the caller's terminal. Started
+# from a service or setsid, the launcher then never saw rbp: it skipped the
+# kill, ran fix-dev.sh under the live chroot, and started a second rbp.
+procs() {
+    for d in /proc/[0-9]*; do
+        c=$(tr '\0' ' ' < "$d/cmdline" 2>/dev/null)
+        [ -n "$c" ] && echo "${d#/proc/} $c"
+    done
+}
+
 # 1. Stop Engine OS + disk service (releases audio, USB, controls)
 systemctl stop engine.service edisksd.service 2>/dev/null
 sleep 1
 
 # 2. Kill any stale rb processes
-for p in $(ps w | awk '$0 ~ /[s]trace|[r]oot\/pdj\/[r]bp|[e]db_streamd|[g]dbserver|[u]sb-watch/ {print $1}'); do
+for p in $(procs | awk '$0 ~ /[s]trace|[r]oot\/pdj\/[r]bp|[e]db_streamd|[g]dbserver|[u]sb-watch/ {print $1}'); do
     kill -9 $p 2>/dev/null
 done
 sleep 1
@@ -52,7 +63,7 @@ nohup chroot /data/rbx3-run env PATH=/bin:/sbin:/usr/bin:/usr/sbin DFB_ROTATE=le
 echo "launched rbp, waiting for initialization..."
 RBP=""
 for i in $(seq 1 30); do
-  RBP=$(ps w | awk '/\/root\/pdj\/rbp/ && !/sh -c/ && !/awk/ {print $1; exit}')
+  RBP=$(procs | awk '/\/root\/pdj\/rbp/ && !/sh -c/ && !/awk/ {print $1; exit}')
   if [ -n "$RBP" ] && ls -l /proc/$RBP/fd 2>/dev/null | grep -q udev_usb1; then
     echo "RBP=$RBP ready (udev_usb1 fd opened)"
     break
@@ -104,6 +115,6 @@ fi
 
 # Cleanup on exit
 sh /data/usb-watch.sh stop 2>/dev/null
-for p in $(ps w | awk '$0 ~ /[r]oot\/pdj\/[r]bp|[e]db_streamd/ {print $1}'); do
+for p in $(procs | awk '$0 ~ /[r]oot\/pdj\/[r]bp|[e]db_streamd/ {print $1}'); do
     kill -9 $p 2>/dev/null
 done

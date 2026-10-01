@@ -23,3 +23,10 @@ Also needed on the device:
   lacks `/bin`) and preloads `fbshim:knobshim:audioshim` (that order).
 * Restarting? clear `/tmp/guard_LocalDBServer` + `/tmp/req_LocalDBServer` first
   (DeviceSQL locks) — see [docs/11](../../docs/11-runtime-launcher.md).
+* Run one launcher at a time. The scripts find processes through
+  `/proc/*/cmdline` (`procs()`), not `ps w`. On Engine OS 5.x, `ps` is procps,
+  and `ps w` hides processes that have no terminal.
+* `fix-dev.sh` never runs `rm -rf` on `/data/rbx3-run/dev` while it is still
+  mounted. That directory is a bind of the real `/dev`, and deleting it once
+  removed `fb0`, `dri`, and `sda*` and rebooted the unit
+  ([docs/11](../../docs/11-runtime-launcher.md#finding-processes-not-ps-w)).

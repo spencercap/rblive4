@@ -6,10 +6,22 @@
 # Run after every reboot, before starting rbp.
 
 # --- bind mounts -----------------------------------------------------------
-umount /data/rbx3-run/dev 2>/dev/null
-rm -rf /data/rbx3-run/dev
-mkdir -p /data/rbx3-run/dev
-mount --bind /dev /data/rbx3-run/dev
+# Never rm -rf while it is still a mount: it is a bind of the real /dev, and
+# the delete removes the unit's device nodes (fb0, dri, sda...). That happens
+# when rbp still holds the chroot, so umount fails with EBUSY. Peel off any
+# stacked binds; if one stays busy, keep it as it is.
+n=0
+while mountpoint -q /data/rbx3-run/dev && [ "$n" -lt 8 ]; do
+  umount /data/rbx3-run/dev 2>/dev/null || break
+  n=$((n + 1))
+done
+if mountpoint -q /data/rbx3-run/dev; then
+  echo "dev busy, kept existing bind"
+else
+  rm -rf /data/rbx3-run/dev
+  mkdir -p /data/rbx3-run/dev
+  mount --bind /dev /data/rbx3-run/dev
+fi
 mountpoint -q /data/rbx3-run/proc || mount --bind /proc /data/rbx3-run/proc
 mountpoint -q /data/rbx3-run/sys  || mount --bind /sys  /data/rbx3-run/sys
 mountpoint -q /data/rbx3-run/tmp  || mount --bind /tmp  /data/rbx3-run/tmp

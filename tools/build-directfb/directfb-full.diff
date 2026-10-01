@@ -1,5 +1,5 @@
 diff --git a/lib/direct/modules.c b/lib/direct/modules.c
-index 57e6382..75efda3 100644
+index 57e63822f..75efda355 100644
 --- a/lib/direct/modules.c
 +++ b/lib/direct/modules.c
 @@ -137,6 +137,7 @@ direct_modules_register( DirectModuleDir *directory,
@@ -38,7 +38,7 @@ index 57e6382..75efda3 100644
            D_DLERROR( "Direct/Modules: Unable to dlopen `%s'!\n", buf );
  
 diff --git a/src/core/core.c b/src/core/core.c
-index 88b5b63..e333767 100644
+index 88b5b6357..e33376717 100644
 --- a/src/core/core.c
 +++ b/src/core/core.c
 @@ -275,6 +275,7 @@ dfb_core_create( CoreDFB **ret_core )
@@ -78,7 +78,7 @@ index 88b5b63..e333767 100644
                 return ret;
            }
 diff --git a/src/core/layer_context.c b/src/core/layer_context.c
-index 2265f4b..ef142a8 100644
+index 2265f4b0f..ef142a8b0 100644
 --- a/src/core/layer_context.c
 +++ b/src/core/layer_context.c
 @@ -250,6 +250,7 @@ dfb_layer_context_init( CoreLayerContext *context,
@@ -106,7 +106,7 @@ index 2265f4b..ef142a8 100644
                     D_DERROR( ret, "DirectFB/core/layers: "
                               "Could not set layer context config!\n" );
 diff --git a/src/core/local_surface_pool.c b/src/core/local_surface_pool.c
-index f52e8c8..289dc55 100644
+index f52e8c8cc..289dc559b 100644
 --- a/src/core/local_surface_pool.c
 +++ b/src/core/local_surface_pool.c
 @@ -148,6 +148,8 @@ localAllocateBuffer( CoreSurfacePool       *pool,
@@ -119,7 +119,7 @@ index f52e8c8..289dc55 100644
  
       allocation->flags = CSALF_VOLATILE;
 diff --git a/src/core/system.c b/src/core/system.c
-index 37a7a9f..b1b563a 100644
+index 37a7a9f79..b1b563ac3 100644
 --- a/src/core/system.c
 +++ b/src/core/system.c
 @@ -271,6 +271,7 @@ dfb_system_lookup( void )
@@ -131,7 +131,7 @@ index 37a7a9f..b1b563a 100644
       direct_list_foreach( l, dfb_core_systems.entries ) {
            DirectModuleEntry     *module = (DirectModuleEntry*) l;
 diff --git a/src/core/windowstack.c b/src/core/windowstack.c
-index 848b2df..aea8388 100644
+index 848b2dfba..aea8388a8 100644
 --- a/src/core/windowstack.c
 +++ b/src/core/windowstack.c
 @@ -199,6 +199,7 @@ dfb_windowstack_create( CoreLayerContext *context )
@@ -151,7 +151,7 @@ index 848b2df..aea8388 100644
            D_MAGIC_CLEAR( stack );
            SHFREE( context->shmpool, stack );
 diff --git a/src/directfb.c b/src/directfb.c
-index fe7477a..ba0cc36 100644
+index fe7477a22..ba0cc367b 100644
 --- a/src/directfb.c
 +++ b/src/directfb.c
 @@ -197,9 +197,12 @@ DirectFBCreate( IDirectFB **interface )
@@ -168,10 +168,10 @@ index fe7477a..ba0cc36 100644
       DIRECT_ALLOCATE_INTERFACE( dfb, IDirectFB );
  
 diff --git a/src/idirectfb.c b/src/idirectfb.c
-index a8ceed1..594c4ac 100644
+index 768d9831f..e95987fa5 100644
 --- a/src/idirectfb.c
 +++ b/src/idirectfb.c
-@@ -1193,6 +1193,7 @@ IDirectFB_CreateEventBuffer( IDirectFB             *thiz,
+@@ -1196,6 +1196,7 @@ IDirectFB_CreateEventBuffer( IDirectFB             *thiz,
       DFBResult             ret;
       IDirectFBEventBuffer *iface;
  
@@ -179,7 +179,7 @@ index a8ceed1..594c4ac 100644
       DIRECT_INTERFACE_GET_DATA(IDirectFB)
  
       D_DEBUG_AT( IDFB, "%s( %p )\n", __FUNCTION__, thiz );
-@@ -1220,6 +1221,7 @@ IDirectFB_CreateInputEventBuffer( IDirectFB                   *thiz,
+@@ -1223,6 +1224,7 @@ IDirectFB_CreateInputEventBuffer( IDirectFB                   *thiz,
       IDirectFBEventBuffer      *iface;
       CreateEventBuffer_Context context;
  
@@ -188,7 +188,7 @@ index a8ceed1..594c4ac 100644
  
       D_DEBUG_AT( IDFB, "%s( %p )\n", __FUNCTION__, thiz );
 diff --git a/src/input/idirectfbinputbuffer.c b/src/input/idirectfbinputbuffer.c
-index 7f9f575..07c6728 100644
+index 7f9f575ac..07c67289a 100644
 --- a/src/input/idirectfbinputbuffer.c
 +++ b/src/input/idirectfbinputbuffer.c
 @@ -348,6 +348,7 @@ IDirectFBEventBuffer_GetEvent( IDirectFBEventBuffer *thiz,
@@ -200,7 +200,7 @@ index 7f9f575..07c6728 100644
  
       D_DEBUG_AT( IDFBEvBuf, "%s( %p, %p )\n", __FUNCTION__, thiz, event );
 diff --git a/systems/fbdev/Makefile.am b/systems/fbdev/Makefile.am
-index cf4ff8f..3a5cf4f 100644
+index cf4ff8fb7..3a5cf4f6e 100644
 --- a/systems/fbdev/Makefile.am
 +++ b/systems/fbdev/Makefile.am
 @@ -33,6 +33,7 @@ libdirectfb_fbdev_la_LDFLAGS = \
@@ -212,7 +212,7 @@ index cf4ff8f..3a5cf4f 100644
  	fbdev.c			\
  	fbdev_surface_pool.c	\
 diff --git a/systems/fbdev/fbdev.c b/systems/fbdev/fbdev.c
-index 36c295e..748b22e 100644
+index 36c295e97..0b7a73458 100644
 --- a/systems/fbdev/fbdev.c
 +++ b/systems/fbdev/fbdev.c
 @@ -33,6 +33,7 @@
@@ -223,7 +223,29 @@ index 36c295e..748b22e 100644
  #include <stdio.h>
  #include <stdlib.h>
  #include <errno.h>
-@@ -116,6 +117,109 @@ static int fbdev_ioctl( int request, void *arg, int arg_size );
+@@ -44,9 +45,13 @@
+ #include <fcntl.h>
+ #include <sys/ioctl.h>
+ #include <sys/mman.h>
++
++#include "../../../../rblive4_sc/scripts/shims/overlay_playmode.h"
+ #include <sys/kd.h>
+ 
+ #include <pthread.h>
++#include <semaphore.h>
++#include <sys/resource.h>
+ 
+ #ifdef USE_SYSFS
+ # include <sysfs/libsysfs.h>
+@@ -78,6 +83,7 @@
+ #include <gfx/convert.h>
+ 
+ #include <direct/mem.h>
++#include <direct/clock.h>
+ #include <direct/memcpy.h>
+ #include <direct/messages.h>
+ #include <direct/signals.h>
+@@ -116,6 +122,371 @@ static int fbdev_ioctl( int request, void *arg, int arg_size );
  
  #define FBDEV_IOCTL(request,arg)   fbdev_ioctl( request, arg, sizeof(*(arg)) )
  
@@ -253,6 +275,251 @@ index 36c295e..748b22e 100644
 +     return 0xff000000 | (r << 16) | (g << 8) | b;
 +}
 +
++/* Snapshot of the on-screen MODE tab. Pixels inside it are left as the
++ * shim painted them, so the next rotate does not wipe the button. */
++static struct rb_overlay_shm *ov_shm;
++
++static void
++ov_load( void )
++{
++     if (ov_shm)
++          return;
++     int fd = open( RB_OVERLAY_SHM, O_RDONLY );
++     if (fd < 0)
++          return;
++     void *p = mmap( NULL, sizeof(*ov_shm), PROT_READ, MAP_SHARED, fd, 0 );
++     close( fd );
++     if (p == MAP_FAILED)
++          return;
++     ov_shm = p;
++}
++
++static int
++ov_keep( int deg, int x, int y )
++{
++     struct rb_overlay_shm *s = ov_shm;
++     if (deg != 90 || !s)
++          return 0;
++     /* DFB_ROTATE=left: source (x, y) is the upright visual coordinate. */
++     if (x >= s->tab_x && y >= s->tab_y &&
++         x < s->tab_x + s->tab_w && y < s->tab_y + s->tab_h)
++          return 1;
++     if (s->open &&
++         x >= s->pan_x && y >= s->pan_y &&
++         x < s->pan_x + s->pan_w && y < s->pan_y + s->pan_h)
++          return 1;
++     return 0;
++}
++
++#define ROT_TILE    32
++#define ROT_MAX_THR 4
++
++static int
++rect_hits( int x, int y, int w, int h, int rx, int ry, int rw, int rh )
++{
++     return x < rx + rw && rx < x + w && y < ry + rh && ry < y + h;
++}
++
++/* RGB565 -> RGB32 is an OR of one entry per source byte: red and blue sit
++ * in one byte each, and green's replicated low bits come from its top two
++ * bits, which are in the high byte. Two 1 KB tables replace the shifts. */
++static unsigned int rot_lut_lo[256], rot_lut_hi[256];
++
++static void
++rot_lut_init( void )
++{
++     unsigned int i;
++     if (rot_lut_hi[0])
++          return;
++     for (i = 0; i < 256; i++)
++          rot_lut_lo[i] = rgb565_to_rgb32( i ) ^ rgb565_to_rgb32( 0 );
++     for (i = 0; i < 256; i++)
++          rot_lut_hi[i] = rgb565_to_rgb32( i << 8 );
++}
++
++struct rot_job {
++     const unsigned char *src;
++     unsigned char       *dst;
++     unsigned char       *shadow;   /* last source rotated into dst, or NULL */
++     int                  full;     /* redraw every tile, then refresh shadow */
++     int sw, sh, spitch, fpitch;
++     int tab_x, tab_y, tab_w, tab_h;
++     int pan_x, pan_y, pan_w, pan_h;
++};
++
++/* dst(px = y, py = sw - 1 - x) = src(x, y) for x in [xa, xb). */
++static void
++rot_band( const struct rot_job *j, int xa, int xb )
++{
++     int sstride = j->spitch / 2;
++     int x0, y0, x, y;
++
++     for (x0 = xa; x0 < xb; x0 += ROT_TILE) {
++          int x1 = (x0 + ROT_TILE < xb) ? x0 + ROT_TILE : xb;
++          for (y0 = 0; y0 < j->sh; y0 += ROT_TILE) {
++               int y1 = (y0 + ROT_TILE < j->sh) ? y0 + ROT_TILE : j->sh;
++               int keep = rect_hits( x0, y0, x1 - x0, y1 - y0, j->tab_x, j->tab_y, j->tab_w, j->tab_h ) ||
++                          rect_hits( x0, y0, x1 - x0, y1 - y0, j->pan_x, j->pan_y, j->pan_w, j->pan_h );
++               if (j->shadow) {
++                    /* Skip a tile whose source matches what this fb page
++                     * already shows. Overlay tiles always go through. */
++                    int row_bytes = (x1 - x0) * 2;
++                    int same = !j->full && !keep;
++                    for (y = y0; same && y < y1; y++)
++                         same = !memcmp( j->src + y * j->spitch + x0 * 2,
++                                         j->shadow + y * j->spitch + x0 * 2, row_bytes );
++                    if (same)
++                         continue;
++                    for (y = y0; y < y1; y++)
++                         memcpy( j->shadow + y * j->spitch + x0 * 2,
++                                 j->src + y * j->spitch + x0 * 2, row_bytes );
++               }
++               for (x = x0; x < x1; x++) {
++                    const unsigned short *sp = (const unsigned short *)j->src + y0 * sstride + x;
++                    unsigned int *dp = (unsigned int *)(j->dst + (j->sw - 1 - x) * j->fpitch) + y0;
++                    if (keep) {
++                         for (y = y0; y < y1; y++, sp += sstride, dp++) {
++                              unsigned int px;
++                              if (ov_keep( 90, x, y ))
++                                   continue;
++                              px = *sp;
++                              *dp = rot_lut_lo[px & 0xff] | rot_lut_hi[px >> 8];
++                         }
++                    }
++                    else {
++                         for (y = y0; y < y1; y++, sp += sstride, dp++) {
++                              unsigned int px = *sp;
++                              *dp = rot_lut_lo[px & 0xff] | rot_lut_hi[px >> 8];
++                         }
++                    }
++               }
++          }
++     }
++}
++
++/* The rotate runs on gui_task between rbp's render and the pan, so its
++ * time adds straight onto every frame. Split it into bands across cores.
++ * Helpers run at nice 5 so JuceALSA (SCHED_OTHER, nice 0) wins a core. */
++static int            rot_nthr;
++static pthread_t      rot_thr[ROT_MAX_THR];
++static sem_t          rot_go[ROT_MAX_THR], rot_done[ROT_MAX_THR];
++static struct rot_job rot_cur;
++
++static int
++rot_band_x( int i, int n, int sw )
++{
++     return (i >= n) ? sw : (sw * i / n) / ROT_TILE * ROT_TILE;
++}
++
++static void *
++rot_worker( void *arg )
++{
++     int i = (int)(long)arg;
++     setpriority( PRIO_PROCESS, syscall( SYS_gettid ), 5 );
++     for (;;) {
++          while (sem_wait( &rot_go[i] ) != 0) {}
++          rot_band( &rot_cur, rot_band_x( i, rot_nthr, rot_cur.sw ),
++                    rot_band_x( i + 1, rot_nthr, rot_cur.sw ) );
++          sem_post( &rot_done[i] );
++     }
++     return NULL;
++}
++
++static void
++rot_threads_init( void )
++{
++     const char *e;
++     int n = 3, i;
++     if (rot_nthr)
++          return;
++     e = getenv( "DFB_ROT_THREADS" );
++     if (e && atoi( e ) >= 1)
++          n = atoi( e );
++     if (n > ROT_MAX_THR)
++          n = ROT_MAX_THR;
++     /* Index 0 is the calling thread. */
++     for (i = 1; i < n; i++) {
++          sem_init( &rot_go[i], 0, 0 );
++          sem_init( &rot_done[i], 0, 0 );
++          if (pthread_create( &rot_thr[i], NULL, rot_worker, (void *)(long)i ) != 0)
++               break;
++     }
++     rot_nthr = i;
++}
++
++/* One shadow per fb page (DirectFB pages through up to three). A page is
++ * fully redrawn the first time and whenever the overlay rects change,
++ * because pixels under a closed panel must come back from the source. */
++#define ROT_PAGES 3
++static struct {
++     unsigned char *dst;
++     unsigned char *shadow;
++     int            size;
++     int            sig[8];
++} rot_page[ROT_PAGES];
++
++static void
++rot_shadow_pick( struct rot_job *j )
++{
++     int sig[8] = { j->tab_x, j->tab_y, j->tab_w, j->tab_h,
++                    j->pan_x, j->pan_y, j->pan_w, j->pan_h };
++     int size = j->sh * j->spitch;
++     int i;
++
++     for (i = 0; i < ROT_PAGES; i++)
++          if (rot_page[i].dst == j->dst)
++               break;
++     if (i == ROT_PAGES) {
++          for (i = 0; i < ROT_PAGES; i++)
++               if (!rot_page[i].dst)
++                    break;
++          if (i == ROT_PAGES)
++               return;   /* unknown page: no shadow, plain full rotate */
++          rot_page[i].dst = j->dst;
++     }
++     if (rot_page[i].size != size) {
++          free( rot_page[i].shadow );
++          rot_page[i].shadow = malloc( size );
++          rot_page[i].size = rot_page[i].shadow ? size : 0;
++          j->full = 1;
++     }
++     if (!rot_page[i].shadow)
++          return;
++     if (memcmp( rot_page[i].sig, sig, sizeof(sig) )) {
++          memcpy( rot_page[i].sig, sig, sizeof(sig) );
++          j->full = 1;
++     }
++     j->shadow = rot_page[i].shadow;
++}
++
++static void
++fbdev_rotate_left16( const unsigned char *src, int sw, int sh, int spitch,
++                     unsigned char *dst, int fpitch )
++{
++     struct rb_overlay_shm *s = ov_shm;
++     struct rot_job j;
++     int i;
++
++     rot_lut_init();
++     rot_threads_init();
++     memset( &j, 0, sizeof(j) );
++     j.src = src; j.dst = dst;
++     j.sw = sw; j.sh = sh; j.spitch = spitch; j.fpitch = fpitch;
++     if (s) {
++          j.tab_x = s->tab_x; j.tab_y = s->tab_y; j.tab_w = s->tab_w; j.tab_h = s->tab_h;
++          if (s->open) {
++               j.pan_x = s->pan_x; j.pan_y = s->pan_y; j.pan_w = s->pan_w; j.pan_h = s->pan_h;
++          }
++     }
++     rot_shadow_pick( &j );
++     rot_cur = j;
++     for (i = 1; i < rot_nthr; i++)
++          sem_post( &rot_go[i] );
++     rot_band( &j, 0, rot_band_x( 1, rot_nthr, sw ) );
++     for (i = 1; i < rot_nthr; i++)
++          while (sem_wait( &rot_done[i] ) != 0) {}
++}
++
 +static void
 +fbdev_rotate_primary( unsigned char *src, int sw, int sh, int spitch,
 +                      unsigned char *dst, int fw, int fh, int fpitch,
@@ -266,6 +533,17 @@ index 36c295e..748b22e 100644
 +     if (!scratch || !src || !dst)
 +          return;
 +
++     ov_load();
++
++     /* RGB16 source rotated left: the common path. The source is system
++      * memory (rot_surface), never the fb, so read it directly. Work in
++      * square tiles so the column-strided writes stay in cache, and test
++      * the overlay rects once per tile instead of once per pixel. */
++     if (src_bpp == 2 && deg == 90) {
++          fbdev_rotate_left16( src, sw, sh, spitch, dst, fpitch );
++          return;
++     }
++
 +     /* copy the whole logical buffer to scratch first (safe in-place) */
 +     memcpy( scratch, src, (size_t)sh * spitch );
 +
@@ -275,7 +553,10 @@ index 36c295e..748b22e 100644
 +               const unsigned short *srow = (const unsigned short *)(scratch + y * spitch);
 +               for (x = 0; x < (unsigned)sw; x++) {
 +                    unsigned int *dp;
-+                    unsigned int  px = rgb565_to_rgb32( srow[x] );
++                    unsigned int  px;
++                    if (ov_keep( deg, (int)x, (int)y ))
++                         continue;
++                    px = rgb565_to_rgb32( srow[x] );
 +                    switch (deg) {
 +                    case 90:
 +                         dp = (unsigned int *)(dst + (sw - 1 - x) * fpitch + y * 4);
@@ -301,7 +582,10 @@ index 36c295e..748b22e 100644
 +          for (y = 0; y < (unsigned)sh; y++) {
 +               const unsigned int *srow = (const unsigned int *)(scratch + y * spitch);
 +               for (x = 0; x < (unsigned)sw; x++) {
-+                    unsigned int *dp = (unsigned int *)(dst + (sw - 1 - x) * fpitch + y * 4);
++                    unsigned int *dp;
++                    if (ov_keep( deg, (int)x, (int)y ))
++                         continue;
++                    dp = (unsigned int *)(dst + (sw - 1 - x) * fpitch + y * 4);
 +                    dp[0] = srow[x];
 +               }
 +          }
@@ -333,7 +617,7 @@ index 36c295e..748b22e 100644
  FBDev *dfb_fbdev = NULL;
  
  /******************************************************************************/
-@@ -461,6 +565,7 @@ system_initialize( CoreDFB *core, void **data )
+@@ -461,6 +832,7 @@ system_initialize( CoreDFB *core, void **data )
  
       dfb_fbdev->core   = core;
       dfb_fbdev->shared = shared;
@@ -341,7 +625,7 @@ index 36c295e..748b22e 100644
  
       page_size = direct_pagesize();
  
-@@ -515,10 +620,82 @@ system_initialize( CoreDFB *core, void **data )
+@@ -515,10 +887,82 @@ system_initialize( CoreDFB *core, void **data )
                      "Could not disable console acceleration!\n" );
            goto error;
       }
@@ -424,7 +708,7 @@ index 36c295e..748b22e 100644
       shared->orig_cmap_memory = SHMALLOC( pool_data, 256 * 2 * 4 );
       if (!shared->orig_cmap_memory) {
            ret = D_OOSHM();
-@@ -598,6 +775,15 @@ system_initialize( CoreDFB *core, void **data )
+@@ -598,6 +1042,15 @@ system_initialize( CoreDFB *core, void **data )
  
  error:
       if (shared) {
@@ -440,7 +724,7 @@ index 36c295e..748b22e 100644
            if (shared->orig_cmap_memory)
                 SHFREE( pool_data, shared->orig_cmap_memory );
  
-@@ -1188,7 +1374,9 @@ primaryInitLayer( CoreLayer                  *layer,
+@@ -1188,7 +1641,9 @@ primaryInitLayer( CoreLayer                  *layer,
       /* fill out the default configuration */
       config->flags      = DLCONF_WIDTH       | DLCONF_HEIGHT |
                            DLCONF_PIXELFORMAT | DLCONF_BUFFERMODE;
@@ -451,7 +735,7 @@ index 36c295e..748b22e 100644
       config->width      = dfb_config->mode.width  ? dfb_config->mode.width  : default_mode->xres;
       config->height     = dfb_config->mode.height ? dfb_config->mode.height : default_mode->yres;
  
-@@ -1441,7 +1629,19 @@ primarySetRegion( CoreLayer                  *layer,
+@@ -1441,7 +1896,19 @@ primarySetRegion( CoreLayer                  *layer,
                      return ret;
            }
            else {
@@ -472,8 +756,54 @@ index 36c295e..748b22e 100644
                 if (ret)
                      return ret;
            }
-@@ -1485,11 +1685,44 @@ primaryFlipRegion( CoreLayer             *layer,
-          !dfb_config->pollvsync_after)
+@@ -1467,6 +1934,38 @@ primaryRemoveRegion( CoreLayer             *layer,
+      return DFB_OK;
+ }
+ 
++/* Written to /tmp/rb-rot about every 2 s:
++ * "frames rot_avg_us rot_max_us render_avg_us threads". render is the time
++ * from the end of the previous flip to the start of this rotate. */
++static long long rot_flip_end, rot_render_sum;
++
++static void
++rot_stat( long long us )
++{
++     static long long t_start, sum, max;
++     static int n;
++     long long now = direct_clock_get_micros();
++     if (!t_start)
++          t_start = now;
++     sum += us;
++     if (us > max)
++          max = us;
++     n++;
++     if (now - t_start >= 2000000) {
++          char buf[64];
++          int fd = open( "/tmp/rb-rot", O_WRONLY | O_CREAT | O_TRUNC, 0666 );
++          if (fd >= 0) {
++               int len = snprintf( buf, sizeof(buf), "%d %lld %lld %lld %d\n",
++                                   n, sum / n, max, rot_render_sum / n, rot_nthr );
++               if (write( fd, buf, len ) < 0) {}
++               close( fd );
++          }
++          t_start = now;
++          sum = max = rot_render_sum = 0;
++          n = 0;
++     }
++}
++
+ static DFBResult
+ primaryFlipRegion( CoreLayer             *layer,
+                    void                  *driver_data,
+@@ -1481,15 +1980,54 @@ primaryFlipRegion( CoreLayer             *layer,
+ 
+      D_DEBUG_AT( FBDev_Primary, "%s()\n", __FUNCTION__ );
+ 
++     /* Rotated: FBIOPAN on rockchipdrmfb is an atomic commit that already
++      * blocks until vblank. Waiting here too costs a whole refresh per frame. */
+      if (((flags & DSFLIP_WAITFORSYNC) == DSFLIP_WAITFORSYNC) &&
+-         !dfb_config->pollvsync_after)
++         !dfb_config->pollvsync_after && !dfb_fbdev->shared->rot_deg)
            dfb_screen_wait_vsync( dfb_screens_at(DSCID_PRIMARY) );
  
 -     ret = dfb_fbdev_pan( config->source.x,
@@ -494,21 +824,25 @@ index 36c295e..748b22e 100644
 +          int fh  = shared->rot_fh;
 +          int fpitch = shared->rot_fpitch;
 +          int idx = 0;
-+          { FILE*f=fopen("/tmp/dfbdig9.log","a"); if(f){fprintf(f,"flip: rot_deg=%d cfg=%dx%d lock.pitch=%d off=%d\n",shared->rot_deg,sw,sh,lock->pitch,(int)lock->offset); fclose(f);} }
-+          { FILE*f=fopen("/tmp/rot_surface.dump","wb"); if(f){ fwrite(shared->rot_surface,1,(size_t)shared->rot_surface_size,f); fclose(f);} }
++          long long rot_t0;
 +
 +          if (spitch > 0 && sh > 0)
 +               idx = lock->offset / (spitch * sh);
 +
++          rot_t0 = direct_clock_get_micros();
++          if (rot_flip_end)
++               rot_render_sum += rot_t0 - rot_flip_end;
 +          fbdev_rotate_primary( (unsigned char*)shared->rot_surface + lock->offset,
 +                                sw, sh, spitch,
 +                                dfb_fbdev->framebuffer_base + idx * fh * fpitch,
 +                                fw, fh, fpitch,
 +                                shared->rot_deg );
++          rot_stat( direct_clock_get_micros() - rot_t0 );
 +
 +          ret = dfb_fbdev_pan( config->source.x,
 +                               idx * fh + config->source.y,
 +                               (flags & DSFLIP_WAITFORSYNC) == DSFLIP_ONSYNC );
++          rot_flip_end = direct_clock_get_micros();
 +          if (ret)
 +               return ret;
 +     }
@@ -522,7 +856,7 @@ index 36c295e..748b22e 100644
  
       if ((flags & DSFLIP_WAIT) &&
           (dfb_config->pollvsync_after || !(flags & DSFLIP_ONSYNC)))
-@@ -1542,6 +1775,10 @@ dfb_fbdev_pan( int xoffset, int yoffset, bool onsync )
+@@ -1542,6 +2080,10 @@ dfb_fbdev_pan( int xoffset, int yoffset, bool onsync )
  
       var = &shared->current_var;
  
@@ -533,7 +867,7 @@ index 36c295e..748b22e 100644
       if (var->xres_virtual < xoffset + var->xres) {
            D_ERROR( "DirectFB/FBDev: xres %d, vxres %d, xoffset %d\n",
                      var->xres, var->xres_virtual, xoffset );
-@@ -1670,20 +1907,24 @@ dfb_fbdev_mode_to_var( const VideoMode           *mode,
+@@ -1670,20 +2212,24 @@ dfb_fbdev_mode_to_var( const VideoMode           *mode,
       else
            var.yoffset = 0;
  
@@ -567,7 +901,7 @@ index 36c295e..748b22e 100644
                 break;
  
            case DLBM_BACKSYSTEM:
-@@ -1694,6 +1935,7 @@ dfb_fbdev_mode_to_var( const VideoMode           *mode,
+@@ -1694,6 +2240,7 @@ dfb_fbdev_mode_to_var( const VideoMode           *mode,
                 return DFB_UNSUPPORTED;
       }
  
@@ -575,7 +909,7 @@ index 36c295e..748b22e 100644
       /* Set pixel format */
       var.bits_per_pixel = DFB_BITS_PER_PIXEL(pixelformat);
       var.transp.length  = var.transp.offset = 0;
-@@ -1898,6 +2140,31 @@ dfb_fbdev_test_mode( const VideoMode             *mode,
+@@ -1898,6 +2445,31 @@ dfb_fbdev_test_mode( const VideoMode             *mode,
       if (ret)
            return ret;
  
@@ -607,7 +941,7 @@ index 36c295e..748b22e 100644
       need_mem = DFB_BYTES_PER_LINE( config->format, var.xres_virtual ) *
                  DFB_PLANE_MULTIPLY( config->format, var.yres_virtual );
       if (shared->fix.smem_len < need_mem) {
-@@ -2012,14 +2279,33 @@ dfb_fbdev_set_mode( const VideoMode         *mode,
+@@ -2012,14 +2584,33 @@ dfb_fbdev_set_mode( const VideoMode         *mode,
            return ret;
       }
  
@@ -645,7 +979,7 @@ index 36c295e..748b22e 100644
       }
  
       if (FBDEV_IOCTL( FBIOGET_VSCREENINFO, &var2 )) {
-@@ -2032,17 +2318,28 @@ dfb_fbdev_set_mode( const VideoMode         *mode,
+@@ -2032,17 +2623,28 @@ dfb_fbdev_set_mode( const VideoMode         *mode,
       if (var.xres != var2.xres || var.xres_virtual != var2.xres_virtual ||
           var.yres != var2.yres || var.yres_virtual != var2.yres_virtual)
       {
@@ -681,7 +1015,7 @@ index 36c295e..748b22e 100644
  
       shared->current_var = var;
       dfb_fbdev_var_to_mode( &var, &shared->current_mode );
-@@ -2391,6 +2688,14 @@ dfb_fbdev_set_rgb332_palette( void )
+@@ -2391,6 +2993,14 @@ dfb_fbdev_set_rgb332_palette( void )
       return ret;
  }
  
@@ -696,7 +1030,7 @@ index 36c295e..748b22e 100644
  static FusionCallHandlerResult
  fbdev_ioctl_call_handler( int           caller,
                            int           call_arg,
-@@ -2403,6 +2708,8 @@ fbdev_ioctl_call_handler( int           caller,
+@@ -2403,6 +3013,8 @@ fbdev_ioctl_call_handler( int           caller,
       const char cursoroff_str[] = "\033[?1;0;0c";
       const char blankoff_str[] = "\033[9;0]";
  
@@ -705,7 +1039,7 @@ index 36c295e..748b22e 100644
       if (dfb_config->vt && !dfb_config->kd_graphics && call_arg == FBIOPUT_VSCREENINFO)
            ioctl( dfb_fbdev->vt->fd, KDSETMODE, KD_GRAPHICS );
  
-@@ -2416,6 +2723,8 @@ fbdev_ioctl_call_handler( int           caller,
+@@ -2416,6 +3028,8 @@ fbdev_ioctl_call_handler( int           caller,
            write( dfb_fbdev->vt->fd, blankoff_str, strlen(blankoff_str) );
       }
  
@@ -715,7 +1049,7 @@ index 36c295e..748b22e 100644
  
       return FCHR_RETURN;
 diff --git a/systems/fbdev/fbdev.h b/systems/fbdev/fbdev.h
-index d2f5be2..e4f0e2e 100644
+index d2f5be2ee..e4f0e2ebf 100644
 --- a/systems/fbdev/fbdev.h
 +++ b/systems/fbdev/fbdev.h
 @@ -98,6 +98,27 @@ typedef struct {
@@ -747,10 +1081,10 @@ index d2f5be2..e4f0e2e 100644
  
  typedef struct {
 diff --git a/systems/fbdev/fbdev_surface_pool.c b/systems/fbdev/fbdev_surface_pool.c
-index 65ef3d7..5c9dd81 100644
+index 65ef3d770..afe5c4660 100644
 --- a/systems/fbdev/fbdev_surface_pool.c
 +++ b/systems/fbdev/fbdev_surface_pool.c
-@@ -362,8 +362,21 @@ fbdevLock( CoreSurfacePool       *pool,
+@@ -362,8 +362,20 @@ fbdevLock( CoreSurfacePool       *pool,
  
            D_DEBUG_AT( FBDev_Surfaces, "  -> primary layer buffer (index %d)\n", index );
  
@@ -770,11 +1104,10 @@ index 65ef3d7..5c9dd81 100644
 +               lock->pitch  = shared->fix.line_length;
 +               lock->offset = index * allocation->config.size.h * lock->pitch;
 +          }
-+          { FILE*f=fopen("/tmp/dfbdig9.log","a"); if(f){fprintf(f,"pool: lock idx=%d cfg=%dx%d pitch=%d off=%d rot=%d\n",index,allocation->config.size.w,allocation->config.size.h,lock->pitch,(int)lock->offset,dfb_fbdev->shared->rot_deg); fclose(f);} }
  #if D_DEBUG_ENABLED
            allocation->offset = lock->offset;
  #endif
-@@ -373,11 +386,26 @@ fbdevLock( CoreSurfacePool       *pool,
+@@ -373,11 +385,25 @@ fbdevLock( CoreSurfacePool       *pool,
  
            lock->pitch  = alloc->chunk->pitch;
            lock->offset = alloc->chunk->offset;
@@ -782,7 +1115,6 @@ index 65ef3d7..5c9dd81 100644
 +          /* dump first non-primary surface for diagnosis (addr computed: fb mem) */
 +          { static int dumps=0; if (dumps < 1) { void *a = (char*)dfb_fbdev->framebuffer_base + lock->offset; FILE*f=fopen("/tmp/win_surface.dump","wb"); if(f){ fprintf(f,"T=0x%x CFG=%dx%d P=%d\n", allocation->type, allocation->config.size.w, allocation->config.size.h, lock->pitch); fwrite(a,1,4096000,f); fclose(f);} dumps++; } }
       }
-+     { FILE*f=fopen("/tmp/dfbdig9.log","a"); if(f){fprintf(f,"pool: NONPRIMARY cfg=%dx%d pitch=%d off=%d\n",allocation->config.size.w,allocation->config.size.h,lock->pitch,(int)lock->offset); fclose(f);} }
  
       lock->addr = dfb_fbdev->framebuffer_base + lock->offset;
       lock->phys = dfb_fbdev->shared->fix.smem_start + lock->offset;
@@ -802,7 +1134,7 @@ index 65ef3d7..5c9dd81 100644
                   lock->offset, lock->pitch, lock->addr, lock->phys );
  
 diff --git a/wm/default/default.c b/wm/default/default.c
-index e7d1e63..bb828c5 100644
+index e7d1e639b..bb828c563 100644
 --- a/wm/default/default.c
 +++ b/wm/default/default.c
 @@ -2769,9 +2769,6 @@ handle_button_press( CoreWindowStack     *stack,

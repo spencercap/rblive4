@@ -5,7 +5,8 @@
  * the upright UI opens a panel. Each row names the setting on the left,
  * then the value: MODE (SINGLE, CONTINUE, REPEAT, ALL REPEAT), JOG
  * (− percent +), WAVE (BLUE, RGB, 3BAND), QUANT (ON, OFF), TRACK
- * (TAG, TAGS, FIND), EJECT, and POWER.
+ * (TAG, TAGS, FIND), EJECT, POWER, and FPS (display frames per second,
+ * counted at each FBIOPAN; read-only).
  * The MODE button cycles those four play modes. EJECT asks usb-watch to
  * release the stick; the button then reads PULL until the stick is removed.
  * Play mode is UiSetUtilAutoPlayMode, the same call the RX3 utility menu
@@ -87,9 +88,9 @@
 #define TAB_X ((1280 - TAB_W) / 2)
 #define TAB_Y 8
 
-/* Name on the left, value on the right. Seven rows under the MOD tab. */
+/* Name on the left, value on the right. Eight rows under the MOD tab. */
 #define PAN_W 340
-#define PAN_H 320
+#define PAN_H 364
 #define PAN_X ((1280 - PAN_W) / 2)
 #define PAN_Y 48
 
@@ -125,6 +126,7 @@
 #define USB_L_X VAL_X
 #define USB_R_X (VAL_X + USB_HALF + USB_GAP)
 #define PWR_Y  ROW_Y(6)
+#define FPS_Y  ROW_Y(7)
 
 #define COL_TAB    0xff1c2128u
 #define COL_PANEL  0xff121418u
@@ -190,6 +192,7 @@ static const unsigned char GLYPH_W[7] = {0x11,0x11,0x11,0x15,0x15,0x1B,0x11};
 static const unsigned char GLYPH_X[7] = {0x11,0x11,0x0A,0x04,0x0A,0x11,0x11};
 static const unsigned char GLYPH_Y[7] = {0x11,0x11,0x0A,0x04,0x04,0x04,0x04};
 static const unsigned char GLYPH_Z[7] = {0x1F,0x01,0x02,0x04,0x08,0x10,0x1F};
+static const unsigned char GLYPH_DOT[7] = {0x00,0x00,0x00,0x00,0x00,0x0C,0x0C};
 
 /* bit 4 is the leftmost pixel */
 static const unsigned char GLYPH_DIG[10][7] = {
@@ -236,6 +239,7 @@ static const unsigned char *glyph(char c)
     case 'X': return GLYPH_X;
     case 'Y': return GLYPH_Y;
     case 'Z': return GLYPH_Z;
+    case '.': return GLYPH_DOT;
     default:  return NULL;
     }
 }
@@ -417,6 +421,48 @@ static unsigned long long mono_ms(void)
     clock_gettime(CLOCK_MONOTONIC, &ts);
     return (unsigned long long)ts.tv_sec * 1000ULL +
            (unsigned long long)ts.tv_nsec / 1000000ULL;
+}
+
+/* Frames shown over the last second, x10. Published in shm so it can be
+ * read over SSH: od -An -t d4 /tmp/rb-overlay, last number. */
+void overlay_frame(void)
+{
+    static unsigned long long win_ms;
+    static int frames;
+    unsigned long long now = mono_ms();
+    if (!win_ms)
+        win_ms = now;
+    frames++;
+    if (now - win_ms >= 1000) {
+        if (ov_shm)
+            ov_shm->fps_x10 = (int)((frames * 10000ULL + (now - win_ms) / 2) / (now - win_ms));
+        win_ms = now;
+        frames = 0;
+    }
+}
+
+static int fps_x10(void)
+{
+    return ov_shm ? ov_shm->fps_x10 : 0;
+}
+
+/* "59.9" */
+static void fps_label(char *dst, int x10)
+{
+    char tmp[12];
+    int n = 0, i = 0;
+    int whole = x10 / 10;
+    if (x10 < 0)
+        x10 = whole = 0;
+    do {
+        tmp[n++] = (char)('0' + whole % 10);
+        whole /= 10;
+    } while (whole && n < 6);
+    while (n)
+        dst[i++] = tmp[--n];
+    dst[i++] = '.';
+    dst[i++] = (char)('0' + x10 % 10);
+    dst[i] = '\0';
 }
 
 static int pull1, pull2;
@@ -840,6 +886,7 @@ void overlay_paint(int fb_fd, unsigned yoffset)
     int mode;
     int open;
     int jog;
+    int fps;
     char label[16];
     char name1[32];
     char name2[32];
@@ -858,6 +905,9 @@ void overlay_paint(int fb_fd, unsigned yoffset)
     }
     mode = ov_mode;
     jog = jog_milli();
+    /* Only while the panel is open: a closed tab repaints into the live
+     * scanout buffer, so it must not change every second. */
+    fps = open ? fps_x10() : 0;
     pull1 = 0;
     pull2 = 0;
     name1[0] = '\0';
@@ -888,6 +938,7 @@ void overlay_paint(int fb_fd, unsigned yoffset)
     hash = hash_bytes(hash, &open, sizeof(open));
     hash = hash_bytes(hash, &mode, sizeof(mode));
     hash = hash_bytes(hash, &jog, sizeof(jog));
+    hash = hash_bytes(hash, &fps, sizeof(fps));
     hash = hash_bytes(hash, &ov_wave_cur, sizeof(ov_wave_cur));
     hash = hash_bytes(hash, ov_quant, sizeof(ov_quant));
     hash = hash_bytes(hash, &eject_arm, sizeof(eject_arm));
@@ -981,6 +1032,11 @@ void overlay_paint(int fb_fd, unsigned yoffset)
             draw_text(base, VAL_X + VAL_W - tw - 8, ty, "YES", COL_TEXT);
         }
     }
+
+    draw_label(base, FPS_Y, "FPS");
+    fps_label(label, fps);
+    fill_visual(base, VAL_X, FPS_Y, VAL_W, ROW_H, COL_BTN);
+    draw_text_centered(base, VAL_X, FPS_Y, VAL_W, ROW_H, label, COL_TEXT);
     last_hash[page] = hash;
     hash_valid[page] = 1;
 }

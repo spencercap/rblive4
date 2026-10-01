@@ -6,6 +6,7 @@ see [CHANGELOG.md](https://github.com/spencercap/rblive4/blob/main/CHANGELOG.md)
 - ✅ BeatFX + knobs work 
 - ✅ Loop encoders work
 - 👾 added new MOD overlay panel for changing things previously unavailable (quantize on/off, safe eject USBs, etc)
+- ⚡ screen runs at a locked 60 fps (was ~15), with an FPS readout in the MOD panel
 <img src="docs/rkb-scl4.png" alt="" width="720"/>
 <img src="docs/mod-menu.png" alt="" width="360"/>
 

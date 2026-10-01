@@ -2,6 +2,48 @@
 
 Differences from [erhan-/rblive4](https://github.com/erhan-/rblive4), forked at `6003702`.
 
+## 2026-10-01
+
+### Display: 60 fps
+
+The screen ran at about 15 fps, and the waveforms looked choppy. It now runs
+at 60 fps, locked to the panel's 60.06 Hz. The full breakdown is in
+[docs/06 — Frame rate](docs/06-display.md#frame-rate).
+
+| Cause | Fix | FPS after |
+|---|---|---|
+| The fbdev driver logged 3 lines and wrote a 6 MB `/tmp/rot_surface.dump` on every flip | removed | |
+| `FBIO_WAITFORVSYNC` before a pan that already waits for vblank | skipped when rotating | 30 |
+| fbshim slept to 16.7 ms from the previous pan's start | now an 8 ms floor from the previous pan's return | |
+| rbp's `DS_HW_UpdateScreen` sleeps to 16 ms, and the rotate comes after that | fbshim's `usleep` returns at once for that one caller (`0x1a6920`) | 30–54 |
+| One-thread, per-pixel rotate (12 ms) | 32×32 tiles, a lookup table, 3 threads, unchanged tiles skipped (~4 ms) | **60** |
+
+The driver changes are in
+[`tools/build-directfb/directfb-full.diff`](tools/build-directfb/directfb-full.diff),
+regenerated against DirectFB `2199f40b1`. `/tmp/rb-rot` reports the rotate and
+draw times about every 2 s.
+
+### MOD menu: FPS
+
+A read-only **FPS** row at the bottom of the panel shows displayed frames per
+second, for example `60.4`. The same value ×10 is the last field of
+`/tmp/rb-overlay` (`fps_x10`, appended to `struct rb_overlay_shm`).
+
+### Launcher: restarts no longer wipe `/dev`
+
+On Engine OS 5.x, `ps` is procps, and `ps w` lists only processes on the
+caller's terminal. A launcher started without that terminal never saw rbp.
+It skipped the kill, stopped `usb-watch` in its exit cleanup (USB sticks
+stopped being read), and ran `fix-dev.sh` under the live chroot. There
+`umount` failed, and `rm -rf /data/rbx3-run/dev` deleted the real `/dev`
+nodes through the bind mount, then the unit rebooted.
+
+- `start-rb.sh` and `usb-watch.sh` find processes through `/proc/*/cmdline`
+  (`procs()`).
+- `fix-dev.sh` only deletes and re-binds `dev` once it is no longer a mount.
+- The safe restart procedure is in
+  [docs/11](docs/11-runtime-launcher.md#restarting).
+
 ## 2026-09-29
 
 ### MOD menu

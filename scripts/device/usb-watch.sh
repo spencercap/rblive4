@@ -181,7 +181,17 @@ detach() {
   rm -f "$(slot_name "$slot")"
 }
 
-rbp_pid() { ps w | awk '/\/root\/pdj\/rbp/ && !/sh -c/ && !/strace/ && !/awk/ {print $1; exit}'; }
+# Every process as "pid cmdline". Not ps: on firmware 5.x ps is procps, and
+# BSD-style "ps w" lists only processes on the caller's terminal. Started
+# from a service or setsid, the launcher then never saw rbp: it skipped the
+# kill, ran fix-dev.sh under the live chroot, and started a second rbp.
+procs() {
+    for d in /proc/[0-9]*; do
+        c=$(tr '\0' ' ' < "$d/cmdline" 2>/dev/null)
+        [ -n "$c" ] && echo "${d#/proc/} $c"
+    done
+}
+rbp_pid() { procs | awk '/\/root\/pdj\/rbp/ && !/sh -c/ && !/strace/ && !/awk/ {print $1; exit}'; }
 
 held() {
   dev=$1

@@ -9,6 +9,11 @@ Symptom → cause → fix.
 | Kernel **oops/reboot** as soon as rbp starts | `directfbrc` missing → DirectFB takes the GPU/dri path (`panic_on_oops=1`) | install `usr/etc/directfbrc` with `no-hardware` ([06](06-display.md)) |
 | UI sideways | wrong `DFB_ROTATE` | use `DFB_ROTATE=left` |
 | `EINVAL` on `FBIOPUT_VSCREENINFO` | 16 bpp modeset on the fixed 32 bpp DRM fb | use the patched fbdev module |
+| Waveforms choppy, MOD **FPS** reads ~15 | old fbdev module: per-frame debug dump and log writes, plus a second vblank wait | current `directfb-full.diff` module ([06](06-display.md#frame-rate)) |
+| MOD **FPS** reads ~30 | rbp's own 16 ms `usleep` limiter, then the rotate, passes vblank | current `fbshim.so` skips that one `usleep` ([06](06-display.md#frame-rate)) |
+| MOD **FPS** between 30 and 60 | rotate + rbp draw is close to 16.7 ms | check `/tmp/rb-rot`. Rotate should be ~4 ms. Try `DFB_ROT_THREADS=4` |
+| Unit **reboots** when the player is restarted | two launchers or two rbp at once. `fix-dev.sh` used to wipe the real `/dev` | run one launcher, current scripts ([11](11-runtime-launcher.md#finding-processes-not-ps-w)) |
+| `ls: /data/rbx3-run/dev/fb0: No such file` in `start-rb.log`, rbp exits | the host's `/dev/fb0` was deleted by an older `fix-dev.sh` | reboot the unit, then update `fix-dev.sh` |
 
 ## Startup / controls
 
@@ -25,6 +30,7 @@ Symptom → cause → fix.
 | Symptom | Cause | Fix |
 |---|---|---|
 | Stick never detected | `usb-watch.sh` not running, or wrong bus | SC Live 4 media port is **usb1** (`USBWATCH_BUSES="1 2 3"`) ([10](10-usb.md)) |
+| USB stopped working after a restart, log ends `started pid … / stopped` | the launcher missed rbp (`ps w` on 5.x) and its cleanup stopped `usb-watch` | current `start-rb.sh` ([11](11-runtime-launcher.md#finding-processes-not-ps-w)). If `/dev/sda*` is gone, reboot |
 | Generic "USB1", 0 tracks after a restart | stale DeviceSQL guard/req locks | `rm -f /tmp/guard_LocalDBServer /tmp/req_LocalDBServer`, then re-notify ([10](10-usb.md)) |
 | Stick ejects after ~30 s | `edisksd.service` running | stop it in the launcher |
 
@@ -59,5 +65,7 @@ Symptom → cause → fix.
 * `KNOB_VERBOSE=1` → every MIDI event + keycode in `/tmp/knobshim.log`.
 * `cat /tmp/audioshim.log` — negotiated params + `sg`/peaks.
 * `cat /tmp/dfbdig*.log` — DirectFB bring-up (`ROTINIT` line).
+* `cat /tmp/rb-rot` — frames per 2 s, rotate avg/max µs, rbp draw µs, threads.
+* `hexdump -e '11/4 "%d " "\n"' /tmp/rb-overlay` — last number is fps ×10.
 * `aplay`/`amixer`/`alsactl` for audio probing. No `strace`/`gdb` on device —
   cross-build and `scp` if needed.

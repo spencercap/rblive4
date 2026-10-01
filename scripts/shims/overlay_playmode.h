@@ -12,6 +12,9 @@ struct rb_overlay_shm {
     /* 1000 = the unscaled wheel. knobshim multiplies each jog step by
      * this / 1000. Kept across a player restart when /tmp still exists. */
     volatile int jog_gain_milli;
+    /* Displayed frames per second, x10, measured at FBIOPAN by fbshim.
+     * Last field: rot16 and knobshim map the older, shorter struct. */
+    volatile int fps_x10;
 };
 
 #define JOG_GAIN_MIN  200   /* 20%  */
@@ -30,5 +33,8 @@ int overlay_touch(int down, int was_down, int lx, int ly);
 /* Draw the overlay onto the physical framebuffer that was just rotated.
  * yoffset is the FBIOPAN y offset of that buffer. */
 void overlay_paint(int fb_fd, unsigned yoffset);
+
+/* Count one displayed frame. Call once per FBIOPAN. */
+void overlay_frame(void);
 
 #endif

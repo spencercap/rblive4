@@ -31,10 +31,55 @@ chroot /data/rbx3-run env \
   symbol resolves.
 * the speaker/booth level is fixed via `SPEAKER_GAIN` (see [09](09-audio.md)).
 
+## Finding processes: not `ps w`
+
+On Engine OS 5.x, `ps` is procps-ng (`/usr/bin/ps.procps`), not BusyBox. In
+BSD syntax, `ps w` lists only processes on the caller's terminal. A launcher
+started from a service, `setsid`, or `nohup` therefore saw no rbp at all,
+and three things broke:
+
+1. Step 2 did not kill the old rbp.
+2. `RBP` stayed empty, so the launcher skipped its wait loop and ran its exit
+   cleanup at once. That cleanup runs `usb-watch.sh stop`, so **USB sticks
+   stopped being read**.
+3. `fix-dev.sh` ran under the live chroot. `umount /data/rbx3-run/dev` failed
+   with EBUSY, and the `rm -rf /data/rbx3-run/dev` after it deleted the
+   **real** `/dev` nodes (`fb0`, `dri/*`, `sda*`), because that directory is a
+   bind of `/dev`. A second rbp then started against the same DRM device, and
+   the unit **rebooted** (`panic_on_oops=1`).
+
+`start-rb.sh` and `usb-watch.sh` now scan `/proc/*/cmdline` with a `procs()`
+helper that prints `pid cmdline`, the same shape `awk '{print $1}'` expects.
+It works with procps and BusyBox alike. `fix-dev.sh` peels off stacked binds
+and never deletes the directory while it is still a mount. If it stays busy,
+the script prints `dev busy, kept existing bind`.
+
+If `/dev/fb0` or `/dev/sda*` is missing on the host, only a reboot brings the
+nodes back.
+
 ## Restarting
 
-Always clear the DeviceSQL locks when restarting rbp, else the USB library
-shows the generic "USB1" label instead of the volume name/track count:
+Run exactly one launcher. If one is already running, kill it first. If you
+don't, the old launcher's exit cleanup kills the new rbp halfway through its
+startup:
+
+```sh
+for d in /proc/[0-9]*; do
+  case "$(tr '\0' ' ' < $d/cmdline 2>/dev/null)" in
+    "sh /data/start-rb.sh "|"/bin/sh ./start-rb.sh ") kill ${d#/proc/};;
+  esac
+done
+setsid nohup sh /data/start-rb.sh > /data/start-rb.log 2>&1 < /dev/null &
+```
+
+The new launcher stops the old rbp, `edb_streamd`, and `usb-watch` itself.
+It is ready when the log shows `RBP=<pid> ready`. Keep the strings
+`usb-watch`, `root/pdj/rbp`, and `edb_streamd` out of any SSH command line,
+because the launcher's kill scan matches them and would kill the SSH session.
+
+The launcher clears the DeviceSQL locks itself. When restarting rbp by hand,
+clear them too, else the USB library shows the generic "USB1" label instead
+of the volume name/track count:
 
 ```sh
 for p in $(ps -eo pid,comm | awk '$2=="ld-linux.so.3" {print $1}'); do kill -9 $p; done

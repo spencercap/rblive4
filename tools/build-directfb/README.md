@@ -40,6 +40,22 @@ DirectFB tree yourself and apply the diff.
    present into the physical fb. The system-memory source buffer eliminates
    tearing.
 6. **Force `DLBM_TRIPLE`** at layer init so flips occur.
+7. **Leave the MOD overlay alone.** The rotate maps `/tmp/rb-overlay`
+   (`struct rb_overlay_shm` from
+   [`scripts/shims/overlay_playmode.h`](../../scripts/shims/overlay_playmode.h))
+   and skips pixels inside the MOD tab and the open panel, so fbshim's overlay
+   does not flicker.
+8. **60 fps** (2026-10-01; see
+   [docs/06 — Frame rate](../../docs/06-display.md#frame-rate)):
+   * no per-frame debug I/O (the `flip:`/`pool:` log lines and the 6 MB
+     `/tmp/rot_surface.dump` are gone);
+   * no `FBIO_WAITFORVSYNC` before the pan when rotating, since the
+     `rockchipdrmfb` pan already blocks until vblank;
+   * `fbdev_rotate_left16()`: 32×32 tiles, a two-table RGB565→RGB32
+     lookup, an overlay test per tile, bands on `DFB_ROT_THREADS` threads
+     (default 3, helpers at nice 5), and skipping tiles that are unchanged
+     against a per-page shadow copy;
+   * timing in `/tmp/rb-rot` about every 2 s.
 
 The diff also touches core DirectFB (`src/core/*`, `src/idirectfb.c`,
 `src/input/idirectfbinputbuffer.c`, `wm/default/default.c`) — build the whole
@@ -59,7 +75,7 @@ sudo apt-get install gcc-arm-linux-gnueabi libc6-dev-armel-cross \
 # 1. source
 git clone https://github.com/deniskropp/DirectFB.git directfb
 cd directfb
-git checkout v1.4.16
+git checkout 2199f40b1   # no v1.4.16 tag in this repo
 
 # 2. apply the patch
 patch -p1 < /path/to/rblive4/tools/build-directfb/directfb-full.diff
@@ -130,8 +146,19 @@ done
 * The modules must be soft-float and reference only `GLIBC_2.4`/`GLIBC_2.7`.
 * Do not set `layer-size` in `directfbrc` (historically caused a 2×/half-width
   bug); do not rely on `layer-rotate` (unimplemented).
-* The diff/sources include **debug instrumentation** (many
-  `fopen("/tmp/dfbdig*.log", …)` blocks). It is harmless but noisy; delete
-  those blocks for a production build. They are not required for the fix.
+* Some **debug instrumentation** is left (one-time `fopen("/tmp/dfbdig*.log")`
+  lines at init and two one-shot surface dumps). The per-frame logging and the
+  per-frame 6 MB dump were removed: they held the display at 15 fps.
+* `fbdev.c` includes the overlay header by a relative path,
+  `../../../../rblive4_sc/scripts/shims/overlay_playmode.h`. That works when the
+  DirectFB tree sits at `<workspace>/src/directfb` next to `<workspace>/rblive4_sc`.
+  Adjust that line for any other layout.
+* The diff is against DirectFB commit `2199f40b1` (the repo has no `v1.4.16`
+  tag). Regenerate it from a patched checkout with
+  `git diff 2199f40b1 -- . ':!*.orig' ':!*.rej'`.
+* Rebuilding only the fbdev module: `make -C systems/fbdev`, copy
+  `systems/fbdev/.libs/libdirectfb_fbdev.so`, then apply the soname fix-up
+  above to that copy (`.so.6` → `.so.0`). Without that step it won't load in
+  the chroot.
 * The rotation direction is read from `DFB_ROTATE` (`left`/`right`/`180`) in
   `system_initialize`; rblive4 runs with `DFB_ROTATE=left`.

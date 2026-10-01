@@ -109,6 +109,26 @@ static int real_pipe2(int fds[2])
     return syscall(SYS_pipe2, fds, 0);
 }
 
+/* ============ rbp's own frame limiter ============
+ * DS_HW_UpdateScreen tops each frame up to 16 ms after the previous flip
+ * returned: usleep(16000 - elapsed), returning to 0x1a6920 (rbp-audio is
+ * not PIE). Here the flip ends in FBIOPAN, which already blocks until
+ * vblank, and the software rotate runs after that sleep. Sleep plus rotate
+ * passes the 16.7 ms vblank, so every frame waited a second refresh and the
+ * screen ran at 30 fps. Skip that one sleep; every other usleep is passed
+ * through. */
+#define RBP_FRAME_LIMIT_RA ((void *)0x001a6920)
+
+int usleep(useconds_t us)
+{
+    struct timespec req;
+    if (__builtin_return_address(0) == RBP_FRAME_LIMIT_RA)
+        return 0;
+    req.tv_sec = us / 1000000;
+    req.tv_nsec = (long)(us % 1000000) * 1000;
+    return syscall(SYS_nanosleep, &req, NULL) == 0 ? 0 : -1;
+}
+
 /* ============ PART 2: tsc2007 emulation ============ */
 #define TSC_DEVICE  "/dev/tsc2007_2-0048"
 #define EVDEV_PATH  "/dev/input/event0"
@@ -439,22 +459,27 @@ int ioctl(int fd, unsigned long request, ...)
             struct fb_var_screeninfo *v = arg;
             overlay_paint(fd, v->yoffset);
         }
-        /* Lock-free high-precision 60 FPS pacing for DirectFB.
-         * Rockchip DRM returns immediately from FBIOPAN_DISPLAY.
-         * Pace each flip with nanosecond clock_nanosleep so gui_task renders at 60 FPS
-         * without burning 100% CPU on Core 0. Zero mutexes, no audio/event stalling. */
+        /* FBIOPAN on rockchipdrmfb blocks until vblank, which paces
+         * gui_task at the panel's 60 Hz. The old pacer slept to 16.7 ms
+         * from the previous pan's start on top of that, which cost a
+         * refresh per frame. Keep only a floor, measured from when the
+         * previous pan returned (a vblank), in case a pan ever returns
+         * at once. 8 ms ends well before the next vblank. */
         static struct timespec last_pan;
         struct timespec now;
+        int res;
         clock_gettime(CLOCK_MONOTONIC, &now);
         if (last_pan.tv_sec > 0) {
             long elapsed_ns = (now.tv_sec - last_pan.tv_sec) * 1000000000L + (now.tv_nsec - last_pan.tv_nsec);
-            if (elapsed_ns > 0 && elapsed_ns < 16666666L) {
-                struct timespec req = { 0, 16666666L - elapsed_ns };
+            if (elapsed_ns > 0 && elapsed_ns < 8000000L) {
+                struct timespec req = { 0, 8000000L - elapsed_ns };
                 nanosleep(&req, NULL);
             }
         }
+        res = real_ioctl(fd, request, arg);
         clock_gettime(CLOCK_MONOTONIC, &last_pan);
-        return real_ioctl(fd, request, arg);
+        overlay_frame();
+        return res;
     }
     default:
         return real_ioctl(fd, request, arg);
