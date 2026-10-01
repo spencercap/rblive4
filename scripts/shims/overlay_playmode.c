@@ -5,10 +5,10 @@
  * the upright UI opens a panel. Each row names the setting on the left,
  * then the value: MODE (SINGLE, CONTINUE, REPEAT, ALL REPEAT), JOG
  * (− percent +), WAVE (BLUE, RGB, 3BAND), QUANT (ON, OFF), TRACK
- * (TAG, TAGS, FIND), EJECT, SCREEN (− backlight percent +), LEDS (− panel
- * LED percent +, applied by knobshim), CPU (load percent and temperature,
- * read-only), FPS (display frames per second, counted at each FBIOPAN;
- * read-only), and POWER. POWER always stays the last row.
+ * (TAG, TAGS, FIND), SCREEN (− backlight percent +), LEDS (− panel LED
+ * percent +, applied by knobshim), EJECT, STATS (read-only: CPU load percent
+ * and display frames per second, counted at each FBIOPAN), and POWER.
+ * POWER always stays the last row.
  * The MODE button cycles those four play modes. EJECT asks usb-watch to
  * release the stick; the button then reads PULL until the stick is removed.
  * Play mode is UiSetUtilAutoPlayMode, the same call the RX3 utility menu
@@ -84,7 +84,6 @@
 #define USB_PULL2     "/tmp/usb-pull-2"
 #define POWER_REQ     "/tmp/rb-poweroff"
 #define BL_DIR        "/sys/class/backlight/mipi-backlight/"
-#define CPU_TEMP      "/sys/class/thermal/thermal_zone0/temp"   /* cpu-thermal */
 
 /* Upright 1280x800 layout, top center. */
 #define TAB_W 80
@@ -92,10 +91,10 @@
 #define TAB_X ((1280 - TAB_W) / 2)
 #define TAB_Y 8
 
-/* Name on the left, value on the right. Eleven rows under the MOD tab:
+/* Name on the left, value on the right. Ten rows under the MOD tab:
  * PAN_H = 2 * PAD + rows * ROW_H + (rows - 1) * ROW_GAP. */
 #define PAN_W 340
-#define PAN_H 496
+#define PAN_H 452
 #define PAN_X ((1280 - PAN_W) / 2)
 #define PAN_Y 48
 
@@ -125,17 +124,16 @@
 #define QUANT_ON_X VAL_X
 #define QUANT_OFF_X (VAL_X + QUANT_HALF + QUANT_GAP)
 #define TRACK_Y ROW_Y(4)
-#define USB_Y  ROW_Y(5)
+#define SCR_Y  ROW_Y(5)
+#define LED_Y  ROW_Y(6)
+#define USB_Y  ROW_Y(7)
 #define USB_GAP 8
 #define USB_HALF ((VAL_W - USB_GAP) / 2)
 #define USB_L_X VAL_X
 #define USB_R_X (VAL_X + USB_HALF + USB_GAP)
-#define SCR_Y  ROW_Y(6)
-#define LED_Y  ROW_Y(7)
-#define CPU_Y  ROW_Y(8)
-#define FPS_Y  ROW_Y(9)
+#define STATS_Y ROW_Y(8)
 /* POWER is always the last row; add new rows above it. */
-#define PWR_Y  ROW_Y(10)
+#define PWR_Y  ROW_Y(9)
 
 #define COL_TAB    0xff1c2128u
 #define COL_PANEL  0xff121418u
@@ -203,7 +201,6 @@ static const unsigned char GLYPH_Y[7] = {0x11,0x11,0x0A,0x04,0x04,0x04,0x04};
 static const unsigned char GLYPH_Z[7] = {0x1F,0x01,0x02,0x04,0x08,0x10,0x1F};
 static const unsigned char GLYPH_DOT[7] = {0x00,0x00,0x00,0x00,0x00,0x0C,0x0C};
 static const unsigned char GLYPH_PCT[7] = {0x18,0x19,0x02,0x04,0x08,0x13,0x03};
-static const unsigned char GLYPH_DEG[7] = {0x0C,0x12,0x12,0x0C,0x00,0x00,0x00};
 
 /* bit 4 is the leftmost pixel */
 static const unsigned char GLYPH_DIG[10][7] = {
@@ -252,7 +249,6 @@ static const unsigned char *glyph(char c)
     case 'Z': return GLYPH_Z;
     case '.': return GLYPH_DOT;
     case '%': return GLYPH_PCT;
-    case '~': return GLYPH_DEG;   /* drawn as a degree sign */
     default:  return NULL;
     }
 }
@@ -602,10 +598,9 @@ static void nudge_led(int dir)
     olog(msg);
 }
 
-/* CPU: busy share of all cores since the previous sample, from /proc/stat,
- * and the cpu-thermal zone in whole degrees. Sampled once a second, and only
- * while the panel is open. */
-static int cpu_pct_v = -1, cpu_temp_v = -1;
+/* CPU: busy share of all cores since the previous sample, from /proc/stat.
+ * Sampled once a second, and only while the panel is open. */
+static int cpu_pct_v = -1;
 
 static void cpu_sample(void)
 {
@@ -636,8 +631,6 @@ static void cpu_sample(void)
         cpu_pct_v = (int)((busy - last_busy) * 100 / (total - last_total));
     last_busy = busy;
     last_total = total;
-    i = read_int_file(CPU_TEMP, -1000);
-    cpu_temp_v = (i >= 0) ? (i + 500) / 1000 : -1;
 }
 
 static int pull1, pull2;
@@ -1062,7 +1055,7 @@ void overlay_paint(int fb_fd, unsigned yoffset)
     int open;
     int jog;
     int fps;
-    int scr = 0, led = 0, cpu = -1, temp = -1;
+    int scr = 0, led = 0, cpu = -1;
     char label[24];
     char name1[32];
     char name2[32];
@@ -1089,7 +1082,6 @@ void overlay_paint(int fb_fd, unsigned yoffset)
         led = led_pct();
         cpu_sample();
         cpu = cpu_pct_v;
-        temp = cpu_temp_v;
     }
     pull1 = 0;
     pull2 = 0;
@@ -1125,7 +1117,6 @@ void overlay_paint(int fb_fd, unsigned yoffset)
     hash = hash_bytes(hash, &scr, sizeof(scr));
     hash = hash_bytes(hash, &led, sizeof(led));
     hash = hash_bytes(hash, &cpu, sizeof(cpu));
-    hash = hash_bytes(hash, &temp, sizeof(temp));
     hash = hash_bytes(hash, &ov_wave_cur, sizeof(ov_wave_cur));
     hash = hash_bytes(hash, ov_quant, sizeof(ov_quant));
     hash = hash_bytes(hash, &eject_arm, sizeof(eject_arm));
@@ -1194,19 +1185,6 @@ void overlay_paint(int fb_fd, unsigned yoffset)
                 (!ov_quant[0] && !ov_quant[1]) ? COL_ON : COL_BTN);
     draw_text_centered(base, QUANT_OFF_X, QUANT_Y, QUANT_HALF, ROW_H, "OFF", COL_TEXT);
 
-    draw_label(base, USB_Y, "EJECT");
-    fill_visual(base, USB_L_X, USB_Y, USB_HALF, ROW_H,
-                (eject_arm == 1 || pull1) ? COL_ON : COL_BTN);
-    if (eject_arm == 1 && !pull1)
-        draw_text_centered(base, USB_L_X, USB_Y, USB_HALF, ROW_H, "YES", COL_TEXT);
-    else
-        draw_volume(base, USB_L_X, USB_Y, USB_HALF, ROW_H, name1, "USB 1", pull1);
-    fill_visual(base, USB_R_X, USB_Y, USB_HALF, ROW_H,
-                (eject_arm == 2 || pull2) ? COL_ON : COL_BTN);
-    if (eject_arm == 2 && !pull2)
-        draw_text_centered(base, USB_R_X, USB_Y, USB_HALF, ROW_H, "YES", COL_TEXT);
-    else
-        draw_volume(base, USB_R_X, USB_Y, USB_HALF, ROW_H, name2, "USB 2", pull2);
 
     {
         int pw = PAN_W - 12;
@@ -1238,29 +1216,36 @@ void overlay_paint(int fb_fd, unsigned yoffset)
     draw_text_centered(base, STEP_DN_X + STEP_W, LED_Y,
                        STEP_UP_X - (STEP_DN_X + STEP_W), ROW_H, label, COL_TEXT);
 
-    draw_label(base, CPU_Y, "CPU");
+    draw_label(base, USB_Y, "EJECT");
+    fill_visual(base, USB_L_X, USB_Y, USB_HALF, ROW_H,
+                (eject_arm == 1 || pull1) ? COL_ON : COL_BTN);
+    if (eject_arm == 1 && !pull1)
+        draw_text_centered(base, USB_L_X, USB_Y, USB_HALF, ROW_H, "YES", COL_TEXT);
+    else
+        draw_volume(base, USB_L_X, USB_Y, USB_HALF, ROW_H, name1, "USB 1", pull1);
+    fill_visual(base, USB_R_X, USB_Y, USB_HALF, ROW_H,
+                (eject_arm == 2 || pull2) ? COL_ON : COL_BTN);
+    if (eject_arm == 2 && !pull2)
+        draw_text_centered(base, USB_R_X, USB_Y, USB_HALF, ROW_H, "YES", COL_TEXT);
+    else
+        draw_volume(base, USB_R_X, USB_Y, USB_HALF, ROW_H, name2, "USB 2", pull2);
+
+    draw_label(base, STATS_Y, "STATS");
     {
+        /* "CPU 38%  FPS 60.4" */
         char *d = label;
-        if (cpu >= 0) {
+        strcpy(d, "CPU ");
+        d += 4;
+        if (cpu >= 0) {   /* first sample lands a second after opening */
             d = put_uint(d, cpu);
             *d++ = '%';
         }
-        if (temp >= 0) {
-            if (d != label)
-                *d++ = ' ';
-            d = put_uint(d, temp);
-            *d++ = '~';
-            *d++ = 'C';
-        }
-        *d = '\0';
+        strcpy(d, "  FPS ");
+        d += 6;
+        fps_label(d, fps);
     }
-    fill_visual(base, VAL_X, CPU_Y, VAL_W, ROW_H, COL_BTN);
-    draw_text_centered(base, VAL_X, CPU_Y, VAL_W, ROW_H, label, COL_TEXT);
-
-    draw_label(base, FPS_Y, "FPS");
-    fps_label(label, fps);
-    fill_visual(base, VAL_X, FPS_Y, VAL_W, ROW_H, COL_BTN);
-    draw_text_centered(base, VAL_X, FPS_Y, VAL_W, ROW_H, label, COL_TEXT);
+    fill_visual(base, VAL_X, STATS_Y, VAL_W, ROW_H, COL_BTN);
+    draw_text_centered(base, VAL_X, STATS_Y, VAL_W, ROW_H, label, COL_TEXT);
     last_hash[page] = hash;
     hash_valid[page] = 1;
 }

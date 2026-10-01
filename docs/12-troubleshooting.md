@@ -9,9 +9,9 @@ Symptom → cause → fix.
 | Kernel **oops/reboot** as soon as rbp starts | `directfbrc` missing → DirectFB takes the GPU/dri path (`panic_on_oops=1`) | install `usr/etc/directfbrc` with `no-hardware` ([06](06-display.md)) |
 | UI sideways | wrong `DFB_ROTATE` | use `DFB_ROTATE=left` |
 | `EINVAL` on `FBIOPUT_VSCREENINFO` | 16 bpp modeset on the fixed 32 bpp DRM fb | use the patched fbdev module |
-| Waveforms choppy, MOD **FPS** reads ~15 | old fbdev module: per-frame debug dump and log writes, plus a second vblank wait | current `directfb-full.diff` module ([06](06-display.md#frame-rate)) |
-| MOD **FPS** reads ~30 | rbp's own 16 ms `usleep` limiter, then the rotate, passes vblank | current `fbshim.so` skips that one `usleep` ([06](06-display.md#frame-rate)) |
-| MOD **FPS** between 30 and 60 | rotate + rbp draw is close to 16.7 ms | check `/tmp/rb-rot`. Rotate should be ~4 ms. Try `DFB_ROT_THREADS=4` |
+| Waveforms choppy, MOD **STATS** FPS reads ~15 | old fbdev module: per-frame debug dump and log writes, plus a second vblank wait | current `directfb-full.diff` module ([06](06-display.md#frame-rate)) |
+| MOD **STATS** FPS reads ~30 | rbp's own 16 ms `usleep` limiter, then the rotate, passes vblank | current `fbshim.so` skips that one `usleep` ([06](06-display.md#frame-rate)) |
+| MOD **STATS** FPS between 30 and 60 | rotate + rbp draw is close to 16.7 ms | check `/tmp/rb-rot`. Rotate should be ~4 ms. Try `DFB_ROT_THREADS=4` |
 | Unit **reboots** when the player is restarted | two launchers or two rbp at once. `fix-dev.sh` used to wipe the real `/dev` | run one launcher, current scripts ([11](11-runtime-launcher.md#finding-processes-not-ps-w)) |
 | `ls: /data/rbx3-run/dev/fb0: No such file` in `start-rb.log`, rbp exits | the host's `/dev/fb0` was deleted by an older `fix-dev.sh` | reboot the unit, then update `fix-dev.sh` |
 

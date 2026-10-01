@@ -131,8 +131,8 @@ Each of these cost at least one refresh per frame:
 
 ### Measuring it
 
-* **MOD panel → FPS row** shows displayed frames per second, for example
-  `60.4`. fbshim counts every `FBIOPAN_DISPLAY` over a 1 s window. The row
+* **MOD panel → STATS row** shows displayed frames per second next to CPU load, for example
+  `FPS 60.4`. fbshim counts every `FBIOPAN_DISPLAY` over a 1 s window. The row
   only updates while the panel is open, because repainting the closed tab
   every second would draw into the scanout buffer.
 * Over SSH, the same number ×10 is the last word of the overlay shm:

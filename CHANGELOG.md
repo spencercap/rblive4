@@ -35,24 +35,25 @@ underrun windows went from 6 to 0, and the fullest the buffer got to empty
 went from 183 frames to 62. See
 [docs/09](docs/09-audio.md#underruns-and-clicks).
 
-### MOD menu: SCREEN, LEDS, CPU
+### MOD menu: SCREEN, LEDS, STATS
 
-Three rows go above FPS and POWER (POWER always stays last):
+The panel order is now MODE, JOG, WAVE, QUANT, TRACK, **SCREEN**, **LEDS**,
+EJECT, **STATS**, POWER. POWER always stays last.
 
 - **SCREEN** is backlight brightness, − percent +, 10% to 100% in 10% steps.
   It starts from what Engine OS left it at.
 - **LEDS** is the controller's panel LED brightness, − percent +, 10% to 100%.
   knobshim scales each LED's Note On velocity (pads: each colour channel) and
   re-sends every LED when it changes.
-- **CPU** shows load and temperature, for example `38% 68°C`.
+- **STATS** is read-only, for example `CPU 38%  FPS 60.4`.
 
 Both brightness values are kept in `/tmp/rb-overlay` (`screen_pct`,
 `led_pct`), so they survive a player restart but not a reboot.
 
 ### MOD menu: FPS
 
-A read-only **FPS** row, just above **POWER** (which always stays last), shows
-displayed frames per second, for example `60.4`. The same value ×10 is the last field of
+Displayed frames per second, for example `60.4`, now part of the **STATS**
+row. The same value ×10 is the last field of
 `/tmp/rb-overlay` (`fps_x10`, appended to `struct rb_overlay_shm`).
 
 ### Launcher: restarts no longer wipe `/dev`
