@@ -5,8 +5,8 @@
  * the upright UI opens a panel. Each row names the setting on the left,
  * then the value: MODE (SINGLE, CONTINUE, REPEAT, ALL REPEAT), JOG
  * (− percent +), WAVE (BLUE, RGB, 3BAND), QUANT (ON, OFF), TRACK
- * (TAG, TAGS, FIND), EJECT, POWER, and FPS (display frames per second,
- * counted at each FBIOPAN; read-only).
+ * (TAG, TAGS, FIND), EJECT, FPS (display frames per second, counted at
+ * each FBIOPAN; read-only), and POWER. POWER always stays the last row.
  * The MODE button cycles those four play modes. EJECT asks usb-watch to
  * release the stick; the button then reads PULL until the stick is removed.
  * Play mode is UiSetUtilAutoPlayMode, the same call the RX3 utility menu
@@ -125,8 +125,9 @@
 #define USB_HALF ((VAL_W - USB_GAP) / 2)
 #define USB_L_X VAL_X
 #define USB_R_X (VAL_X + USB_HALF + USB_GAP)
-#define PWR_Y  ROW_Y(6)
-#define FPS_Y  ROW_Y(7)
+/* POWER is always the last row; add new rows above it. */
+#define FPS_Y  ROW_Y(6)
+#define PWR_Y  ROW_Y(7)
 
 #define COL_TAB    0xff1c2128u
 #define COL_PANEL  0xff121418u

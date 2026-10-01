@@ -37,8 +37,8 @@ went from 183 frames to 62. See
 
 ### MOD menu: FPS
 
-A read-only **FPS** row at the bottom of the panel shows displayed frames per
-second, for example `60.4`. The same value ×10 is the last field of
+A read-only **FPS** row, just above **POWER** (which always stays last), shows
+displayed frames per second, for example `60.4`. The same value ×10 is the last field of
 `/tmp/rb-overlay` (`fps_x10`, appended to `struct rb_overlay_shm`).
 
 ### Launcher: restarts no longer wipe `/dev`

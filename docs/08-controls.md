@@ -43,8 +43,8 @@ A **MOD** tab at the top center of the screen opens this panel. Taps on the tab 
 | **QUANT** | **ON** or **OFF** for both decks. **OFF** lets cue land off the beat grid. | The QUANTIZE button, `UiSetQuantizeOnOff`. The settings entry "quantize beat value" only changes the grid size and leaves snapping on. |
 | **TRACK** | **TAG** adds the highlighted browse track to the Tag List. **TAGS** opens the Tag List. **FIND** opens Search, the screen with the on-screen keyboard. TAGS and FIND close the panel so that screen is visible. | **TAG** is Tag Track (`0x420e`, `UiKey_AddTag`). **TAGS** is TAG LIST (`0x0203`). **FIND** is SEARCH (`0x0205`). |
 | **EJECT** | Both USB slots are shown, labeled with a shortened volume name. The first tap on a slot shows **YES**. The **YES** tap ejects that stick. | No RX3 key. `usb-watch.sh` releases the mount. |
-| **POWER** | The first tap shows **YES**. The **YES** tap ejects both sticks, then powers the unit off. Closing the panel before **YES** cancels it. | No RX3 key. The launcher handles the shutdown. |
 | **FPS** | Read-only. Displayed frames per second over the last second, for example `60.4`. Updates while the panel is open. | No RX3 equivalent. fbshim counts each `FBIOPAN_DISPLAY` ([06](06-display.md#frame-rate)). |
+| **POWER** | Always the last row. The first tap shows **YES**. The **YES** tap ejects both sticks, then powers the unit off. Closing the panel before **YES** cancels it. | No RX3 key. The launcher handles the shutdown. |
 
 ## Browse buttons
 
