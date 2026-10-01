@@ -32,8 +32,8 @@ DirectFB tree yourself and apply the diff.
 3. **Use the read-back state** after a rejected/clamped modeset for
    `shared->current_var` — never the rejected request (which corrupted the
    internal geometry).
-4. **Fall back to `FRONTONLY`** when the fb cannot pan, keeping the real
-   `yres_virtual`.
+4. **Fall back to `FRONTONLY`** for DirectFB's layer, keeping the real
+   `yres_virtual`. The rotation path still page-flips the fb itself (item 8).
 5. **Software rotation + RGB565→RGB32 conversion** in
    `fbdev_rotate_primary()`: copy the logical surface to a system-memory
    scratch buffer, rotate (90/270/180 via `DFB_ROTATE`), convert to 32 bpp and
@@ -55,7 +55,10 @@ DirectFB tree yourself and apply the diff.
      lookup, an overlay test per tile, bands on `DFB_ROT_THREADS` threads
      (default 3, helpers at nice 5), and skipping tiles that are unchanged
      against a per-page shadow copy;
-   * timing in `/tmp/rb-rot` about every 2 s.
+   * timing in `/tmp/rb-rot` about every 2 s;
+   * page flipping: the rotate cycles through the fb's 3 pages and pans to
+     each one once it is complete, instead of drawing into page 0 while it is
+     scanned out (that tore the waveforms).
 
 The diff also touches core DirectFB (`src/core/*`, `src/idirectfb.c`,
 `src/input/idirectfbinputbuffer.c`, `wm/default/default.c`) — build the whole

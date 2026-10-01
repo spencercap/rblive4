@@ -212,7 +212,7 @@ index cf4ff8fb7..3a5cf4f6e 100644
  	fbdev.c			\
  	fbdev_surface_pool.c	\
 diff --git a/systems/fbdev/fbdev.c b/systems/fbdev/fbdev.c
-index 36c295e97..0b7a73458 100644
+index 36c295e97..77c2360c8 100644
 --- a/systems/fbdev/fbdev.c
 +++ b/systems/fbdev/fbdev.c
 @@ -33,6 +33,7 @@
@@ -795,7 +795,7 @@ index 36c295e97..0b7a73458 100644
  static DFBResult
  primaryFlipRegion( CoreLayer             *layer,
                     void                  *driver_data,
-@@ -1481,15 +1980,54 @@ primaryFlipRegion( CoreLayer             *layer,
+@@ -1481,15 +1980,71 @@ primaryFlipRegion( CoreLayer             *layer,
  
       D_DEBUG_AT( FBDev_Primary, "%s()\n", __FUNCTION__ );
  
@@ -826,15 +826,32 @@ index 36c295e97..0b7a73458 100644
 +          int idx = 0;
 +          long long rot_t0;
 +
-+          if (spitch > 0 && sh > 0)
-+               idx = lock->offset / (spitch * sh);
++          /* Pick the fb page ourselves. DirectFB hands us the same layer
++           * buffer every frame (offset 0), so the rotate used to write into
++           * page 0 while the panel scanned it out: the waveforms tore where
++           * the writer crossed the scan. Cycle through the fb's pages
++           * instead (yres_virtual = 3 x 1280) and pan to each one only once
++           * it is complete. The pan blocks until vblank, so the page we
++           * write next is never on screen. */
++          {
++               static int rot_fb_page = -1;
++               int pages = (fh > 0) ? (int)(shared->fix.smem_len / ((unsigned)fh * fpitch)) : 1;
++               if (pages > 3)
++                    pages = 3;
++               if (pages >= 2) {
++                    rot_fb_page = (rot_fb_page + 1) % pages;
++                    idx = rot_fb_page;
++               }
++               else if (spitch > 0 && sh > 0)
++                    idx = lock->offset / (spitch * sh);
++          }
 +
 +          rot_t0 = direct_clock_get_micros();
 +          if (rot_flip_end)
 +               rot_render_sum += rot_t0 - rot_flip_end;
 +          fbdev_rotate_primary( (unsigned char*)shared->rot_surface + lock->offset,
 +                                sw, sh, spitch,
-+                                dfb_fbdev->framebuffer_base + idx * fh * fpitch,
++                                (unsigned char*)dfb_fbdev->framebuffer_base + idx * fh * fpitch,
 +                                fw, fh, fpitch,
 +                                shared->rot_deg );
 +          rot_stat( direct_clock_get_micros() - rot_t0 );
@@ -856,7 +873,7 @@ index 36c295e97..0b7a73458 100644
  
       if ((flags & DSFLIP_WAIT) &&
           (dfb_config->pollvsync_after || !(flags & DSFLIP_ONSYNC)))
-@@ -1542,6 +2080,10 @@ dfb_fbdev_pan( int xoffset, int yoffset, bool onsync )
+@@ -1542,6 +2097,10 @@ dfb_fbdev_pan( int xoffset, int yoffset, bool onsync )
  
       var = &shared->current_var;
  
@@ -867,7 +884,7 @@ index 36c295e97..0b7a73458 100644
       if (var->xres_virtual < xoffset + var->xres) {
            D_ERROR( "DirectFB/FBDev: xres %d, vxres %d, xoffset %d\n",
                      var->xres, var->xres_virtual, xoffset );
-@@ -1670,20 +2212,24 @@ dfb_fbdev_mode_to_var( const VideoMode           *mode,
+@@ -1670,20 +2229,24 @@ dfb_fbdev_mode_to_var( const VideoMode           *mode,
       else
            var.yoffset = 0;
  
@@ -901,7 +918,7 @@ index 36c295e97..0b7a73458 100644
                 break;
  
            case DLBM_BACKSYSTEM:
-@@ -1694,6 +2240,7 @@ dfb_fbdev_mode_to_var( const VideoMode           *mode,
+@@ -1694,6 +2257,7 @@ dfb_fbdev_mode_to_var( const VideoMode           *mode,
                 return DFB_UNSUPPORTED;
       }
  
@@ -909,7 +926,7 @@ index 36c295e97..0b7a73458 100644
       /* Set pixel format */
       var.bits_per_pixel = DFB_BITS_PER_PIXEL(pixelformat);
       var.transp.length  = var.transp.offset = 0;
-@@ -1898,6 +2445,31 @@ dfb_fbdev_test_mode( const VideoMode             *mode,
+@@ -1898,6 +2462,31 @@ dfb_fbdev_test_mode( const VideoMode             *mode,
       if (ret)
            return ret;
  
@@ -941,7 +958,7 @@ index 36c295e97..0b7a73458 100644
       need_mem = DFB_BYTES_PER_LINE( config->format, var.xres_virtual ) *
                  DFB_PLANE_MULTIPLY( config->format, var.yres_virtual );
       if (shared->fix.smem_len < need_mem) {
-@@ -2012,14 +2584,33 @@ dfb_fbdev_set_mode( const VideoMode         *mode,
+@@ -2012,14 +2601,33 @@ dfb_fbdev_set_mode( const VideoMode         *mode,
            return ret;
       }
  
@@ -979,7 +996,7 @@ index 36c295e97..0b7a73458 100644
       }
  
       if (FBDEV_IOCTL( FBIOGET_VSCREENINFO, &var2 )) {
-@@ -2032,17 +2623,28 @@ dfb_fbdev_set_mode( const VideoMode         *mode,
+@@ -2032,17 +2640,28 @@ dfb_fbdev_set_mode( const VideoMode         *mode,
       if (var.xres != var2.xres || var.xres_virtual != var2.xres_virtual ||
           var.yres != var2.yres || var.yres_virtual != var2.yres_virtual)
       {
@@ -1015,7 +1032,7 @@ index 36c295e97..0b7a73458 100644
  
       shared->current_var = var;
       dfb_fbdev_var_to_mode( &var, &shared->current_mode );
-@@ -2391,6 +2993,14 @@ dfb_fbdev_set_rgb332_palette( void )
+@@ -2391,6 +3010,14 @@ dfb_fbdev_set_rgb332_palette( void )
       return ret;
  }
  
@@ -1030,7 +1047,7 @@ index 36c295e97..0b7a73458 100644
  static FusionCallHandlerResult
  fbdev_ioctl_call_handler( int           caller,
                            int           call_arg,
-@@ -2403,6 +3013,8 @@ fbdev_ioctl_call_handler( int           caller,
+@@ -2403,6 +3030,8 @@ fbdev_ioctl_call_handler( int           caller,
       const char cursoroff_str[] = "\033[?1;0;0c";
       const char blankoff_str[] = "\033[9;0]";
  
@@ -1039,7 +1056,7 @@ index 36c295e97..0b7a73458 100644
       if (dfb_config->vt && !dfb_config->kd_graphics && call_arg == FBIOPUT_VSCREENINFO)
            ioctl( dfb_fbdev->vt->fd, KDSETMODE, KD_GRAPHICS );
  
-@@ -2416,6 +3028,8 @@ fbdev_ioctl_call_handler( int           caller,
+@@ -2416,6 +3045,8 @@ fbdev_ioctl_call_handler( int           caller,
            write( dfb_fbdev->vt->fd, blankoff_str, strlen(blankoff_str) );
       }
  

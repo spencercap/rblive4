@@ -58,8 +58,9 @@ Rotation is selected at runtime with `DFB_ROTATE=left`.
 ## Notes
 
 * Do **not** set `layer-size` or `layer-rotate` in `directfbrc`.
-* The DRM fb cannot pan; the driver falls back to `FRONTONLY` and keeps the
-  real `yres_virtual`.
+* DirectFB's layer runs `FRONTONLY` and keeps the real `yres_virtual`. The fb
+  itself does pan (`ypanstep` 1, 3 pages of 1280 rows). The rotation path
+  cycles through those pages itself (see Frame rate, item 6).
 * Rotation direction: `DFB_ROTATE=left` (90° CCW). Wrong value = UI sideways.
 
 ## Frame rate
@@ -78,7 +79,7 @@ alone paces the loop at 60 Hz. Nothing else should wait.
 | Step | Now | Before |
 |---|---|---|
 | rbp draws (`DS_HW_UpdateScreen`) | ~6 ms | ~7 ms, plus a sleep to 16 ms |
-| rotate + RGB565→RGB32 | ~4 ms | 12 ms, plus a 6 MB debug dump |
+| rotate + RGB565→RGB32 | ~5 ms | 12 ms, plus a 6 MB debug dump |
 | wait for vblank | the rest of the 16.7 ms | 2 vblank waits, plus a shim sleep |
 
 ### What was wrong
@@ -116,6 +117,17 @@ Each of these cost at least one refresh per frame:
      that did not change. A page is redrawn in full the first time, and
      whenever the MOD rects change, so the area under a closed panel comes
      back.
+6. **Drawing into the page on screen (tearing).** DirectFB hands the driver
+   the same layer buffer every frame (offset 0), so every rotate went into fb
+   page 0 while the panel was scanning it out. The panel scans in physical
+   portrait order, which on screen runs from the right edge to the left.
+   The rotate starts about 6 ms after vblank, when the scan has already
+   passed the right-hand part. So only the middle and left tore: waveforms
+   wiggled near and after the playhead, but not at the right edge. The fb has
+   3 pages (`yres_virtual` 3840, `ypanstep` 1). The driver now cycles through
+   them itself, rotating into a page that is not on screen and panning to it
+   once it is complete. `cat /sys/class/graphics/fb0/pan` should show
+   `0,0`, `0,1280`, and `0,2560` over a few reads.
 
 ### Measuring it
 
