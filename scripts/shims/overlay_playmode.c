@@ -5,8 +5,10 @@
  * the upright UI opens a panel. Each row names the setting on the left,
  * then the value: MODE (SINGLE, CONTINUE, REPEAT, ALL REPEAT), JOG
  * (− percent +), WAVE (BLUE, RGB, 3BAND), QUANT (ON, OFF), TRACK
- * (TAG, TAGS, FIND), EJECT, FPS (display frames per second, counted at
- * each FBIOPAN; read-only), and POWER. POWER always stays the last row.
+ * (TAG, TAGS, FIND), EJECT, SCREEN (− backlight percent +), LEDS (− panel
+ * LED percent +, applied by knobshim), CPU (load percent and temperature,
+ * read-only), FPS (display frames per second, counted at each FBIOPAN;
+ * read-only), and POWER. POWER always stays the last row.
  * The MODE button cycles those four play modes. EJECT asks usb-watch to
  * release the stick; the button then reads PULL until the stick is removed.
  * Play mode is UiSetUtilAutoPlayMode, the same call the RX3 utility menu
@@ -81,6 +83,8 @@
 #define USB_PULL1     "/tmp/usb-pull-1"
 #define USB_PULL2     "/tmp/usb-pull-2"
 #define POWER_REQ     "/tmp/rb-poweroff"
+#define BL_DIR        "/sys/class/backlight/mipi-backlight/"
+#define CPU_TEMP      "/sys/class/thermal/thermal_zone0/temp"   /* cpu-thermal */
 
 /* Upright 1280x800 layout, top center. */
 #define TAB_W 80
@@ -88,9 +92,10 @@
 #define TAB_X ((1280 - TAB_W) / 2)
 #define TAB_Y 8
 
-/* Name on the left, value on the right. Eight rows under the MOD tab. */
+/* Name on the left, value on the right. Eleven rows under the MOD tab:
+ * PAN_H = 2 * PAD + rows * ROW_H + (rows - 1) * ROW_GAP. */
 #define PAN_W 340
-#define PAN_H 364
+#define PAN_H 496
 #define PAN_X ((1280 - PAN_W) / 2)
 #define PAN_Y 48
 
@@ -125,9 +130,12 @@
 #define USB_HALF ((VAL_W - USB_GAP) / 2)
 #define USB_L_X VAL_X
 #define USB_R_X (VAL_X + USB_HALF + USB_GAP)
+#define SCR_Y  ROW_Y(6)
+#define LED_Y  ROW_Y(7)
+#define CPU_Y  ROW_Y(8)
+#define FPS_Y  ROW_Y(9)
 /* POWER is always the last row; add new rows above it. */
-#define FPS_Y  ROW_Y(6)
-#define PWR_Y  ROW_Y(7)
+#define PWR_Y  ROW_Y(10)
 
 #define COL_TAB    0xff1c2128u
 #define COL_PANEL  0xff121418u
@@ -194,6 +202,8 @@ static const unsigned char GLYPH_X[7] = {0x11,0x11,0x0A,0x04,0x0A,0x11,0x11};
 static const unsigned char GLYPH_Y[7] = {0x11,0x11,0x0A,0x04,0x04,0x04,0x04};
 static const unsigned char GLYPH_Z[7] = {0x1F,0x01,0x02,0x04,0x08,0x10,0x1F};
 static const unsigned char GLYPH_DOT[7] = {0x00,0x00,0x00,0x00,0x00,0x0C,0x0C};
+static const unsigned char GLYPH_PCT[7] = {0x18,0x19,0x02,0x04,0x08,0x13,0x03};
+static const unsigned char GLYPH_DEG[7] = {0x0C,0x12,0x12,0x0C,0x00,0x00,0x00};
 
 /* bit 4 is the leftmost pixel */
 static const unsigned char GLYPH_DIG[10][7] = {
@@ -241,6 +251,8 @@ static const unsigned char *glyph(char c)
     case 'Y': return GLYPH_Y;
     case 'Z': return GLYPH_Z;
     case '.': return GLYPH_DOT;
+    case '%': return GLYPH_PCT;
+    case '~': return GLYPH_DEG;   /* drawn as a degree sign */
     default:  return NULL;
     }
 }
@@ -464,6 +476,168 @@ static void fps_label(char *dst, int x10)
     dst[i++] = '.';
     dst[i++] = (char)('0' + x10 % 10);
     dst[i] = '\0';
+}
+
+static void read_file(const char *path, char *dst, int cap);
+
+/* Append a non-negative integer, return the new end. */
+static char *put_uint(char *d, int v)
+{
+    char tmp[12];
+    int n = 0;
+    if (v < 0)
+        v = 0;
+    do {
+        tmp[n++] = (char)('0' + v % 10);
+        v /= 10;
+    } while (v && n < 11);
+    while (n)
+        *d++ = tmp[--n];
+    *d = '\0';
+    return d;
+}
+
+static void pct_label(char *dst, int pct)
+{
+    char *d = put_uint(dst, pct);
+    *d++ = '%';
+    *d = '\0';
+}
+
+static int read_int_file(const char *path, int fallback)
+{
+    char buf[24];
+    int i, v = 0, any = 0;
+    read_file(path, buf, sizeof(buf));
+    for (i = 0; buf[i] >= '0' && buf[i] <= '9'; i++) {
+        v = v * 10 + (buf[i] - '0');
+        any = 1;
+    }
+    return any ? v : fallback;
+}
+
+static void write_int_file(const char *path, int v)
+{
+    char buf[16];
+    char *e = put_uint(buf, v);
+    int fd = open(path, O_WRONLY);
+    *e++ = '\n';
+    if (fd < 0)
+        return;
+    (void)write(fd, buf, (size_t)(e - buf));
+    close(fd);
+}
+
+/* SCREEN: the backlight in percent of max_brightness. The first look reads
+ * what Engine OS left it at, rounded to a 10% step, without changing it. */
+static int screen_pct(void)
+{
+    int p;
+    if (!ov_shm)
+        return 0;
+    p = ov_shm->screen_pct;
+    if (p < SCREEN_PCT_MIN || p > PCT_MAX) {
+        int max = read_int_file(BL_DIR "max_brightness", 255);
+        int cur = read_int_file(BL_DIR "brightness", max);
+        if (max <= 0)
+            max = 255;
+        p = ((cur * 100 / max + PCT_STEP / 2) / PCT_STEP) * PCT_STEP;
+        if (p < SCREEN_PCT_MIN)
+            p = SCREEN_PCT_MIN;
+        if (p > PCT_MAX)
+            p = PCT_MAX;
+        ov_shm->screen_pct = p;
+    }
+    return p;
+}
+
+static void nudge_screen(int dir)
+{
+    int p, max, v;
+    char msg[40];
+    if (!ov_shm)
+        return;
+    p = screen_pct() + dir * PCT_STEP;
+    if (p < SCREEN_PCT_MIN)
+        p = SCREEN_PCT_MIN;
+    if (p > PCT_MAX)
+        p = PCT_MAX;
+    ov_shm->screen_pct = p;
+    max = read_int_file(BL_DIR "max_brightness", 255);
+    v = (p * max + 50) / 100;
+    if (v < 1)
+        v = 1;
+    write_int_file(BL_DIR "brightness", v);
+    strcpy(msg, "overlay: SCREEN ");
+    pct_label(msg + strlen(msg), p);
+    strcat(msg, "\n");
+    olog(msg);
+}
+
+/* LEDS: knobshim reads led_pct on its 20 Hz LED tick. 0 = unset = 100. */
+static int led_pct(void)
+{
+    int p = ov_shm ? ov_shm->led_pct : 0;
+    if (p < LED_PCT_MIN || p > PCT_MAX)
+        p = PCT_MAX;
+    return p;
+}
+
+static void nudge_led(int dir)
+{
+    int p;
+    char msg[40];
+    if (!ov_shm)
+        return;
+    p = led_pct() + dir * PCT_STEP;
+    if (p < LED_PCT_MIN)
+        p = LED_PCT_MIN;
+    if (p > PCT_MAX)
+        p = PCT_MAX;
+    ov_shm->led_pct = p;
+    __sync_synchronize();
+    strcpy(msg, "overlay: LEDS ");
+    pct_label(msg + strlen(msg), p);
+    strcat(msg, "\n");
+    olog(msg);
+}
+
+/* CPU: busy share of all cores since the previous sample, from /proc/stat,
+ * and the cpu-thermal zone in whole degrees. Sampled once a second, and only
+ * while the panel is open. */
+static int cpu_pct_v = -1, cpu_temp_v = -1;
+
+static void cpu_sample(void)
+{
+    static unsigned long long last_ms, last_busy, last_total;
+    unsigned long long now = mono_ms(), f[8], busy, total;
+    char buf[160];
+    const char *p;
+    int i;
+    if (last_ms && now - last_ms < 1000)
+        return;
+    last_ms = now;
+    read_file("/proc/stat", buf, sizeof(buf));
+    p = buf;
+    if (strncmp(p, "cpu ", 4) != 0)
+        return;
+    p += 4;
+    for (i = 0; i < 8; i++) {
+        while (*p == ' ')
+            p++;
+        f[i] = 0;
+        while (*p >= '0' && *p <= '9')
+            f[i] = f[i] * 10 + (unsigned long long)(*p++ - '0');
+    }
+    /* user nice system idle iowait irq softirq steal */
+    total = f[0] + f[1] + f[2] + f[3] + f[4] + f[5] + f[6] + f[7];
+    busy = total - f[3] - f[4];
+    if (last_total && total > last_total)
+        cpu_pct_v = (int)((busy - last_busy) * 100 / (total - last_total));
+    last_busy = busy;
+    last_total = total;
+    i = read_int_file(CPU_TEMP, -1000);
+    cpu_temp_v = (i >= 0) ? (i + 500) / 1000 : -1;
 }
 
 static int pull1, pull2;
@@ -888,7 +1062,8 @@ void overlay_paint(int fb_fd, unsigned yoffset)
     int open;
     int jog;
     int fps;
-    char label[16];
+    int scr = 0, led = 0, cpu = -1, temp = -1;
+    char label[24];
     char name1[32];
     char name2[32];
 
@@ -909,6 +1084,13 @@ void overlay_paint(int fb_fd, unsigned yoffset)
     /* Only while the panel is open: a closed tab repaints into the live
      * scanout buffer, so it must not change every second. */
     fps = open ? fps_x10() : 0;
+    if (open) {
+        scr = screen_pct();
+        led = led_pct();
+        cpu_sample();
+        cpu = cpu_pct_v;
+        temp = cpu_temp_v;
+    }
     pull1 = 0;
     pull2 = 0;
     name1[0] = '\0';
@@ -940,6 +1122,10 @@ void overlay_paint(int fb_fd, unsigned yoffset)
     hash = hash_bytes(hash, &mode, sizeof(mode));
     hash = hash_bytes(hash, &jog, sizeof(jog));
     hash = hash_bytes(hash, &fps, sizeof(fps));
+    hash = hash_bytes(hash, &scr, sizeof(scr));
+    hash = hash_bytes(hash, &led, sizeof(led));
+    hash = hash_bytes(hash, &cpu, sizeof(cpu));
+    hash = hash_bytes(hash, &temp, sizeof(temp));
     hash = hash_bytes(hash, &ov_wave_cur, sizeof(ov_wave_cur));
     hash = hash_bytes(hash, ov_quant, sizeof(ov_quant));
     hash = hash_bytes(hash, &eject_arm, sizeof(eject_arm));
@@ -1034,6 +1220,43 @@ void overlay_paint(int fb_fd, unsigned yoffset)
         }
     }
 
+    draw_label(base, SCR_Y, "SCREEN");
+    fill_visual(base, STEP_DN_X, SCR_Y, STEP_W, ROW_H, COL_BTN);
+    draw_minus_mark(base, STEP_DN_X, SCR_Y, STEP_W, ROW_H);
+    fill_visual(base, STEP_UP_X, SCR_Y, STEP_W, ROW_H, COL_BTN);
+    draw_plus_mark(base, STEP_UP_X, SCR_Y, STEP_W, ROW_H);
+    pct_label(label, scr);
+    draw_text_centered(base, STEP_DN_X + STEP_W, SCR_Y,
+                       STEP_UP_X - (STEP_DN_X + STEP_W), ROW_H, label, COL_TEXT);
+
+    draw_label(base, LED_Y, "LEDS");
+    fill_visual(base, STEP_DN_X, LED_Y, STEP_W, ROW_H, COL_BTN);
+    draw_minus_mark(base, STEP_DN_X, LED_Y, STEP_W, ROW_H);
+    fill_visual(base, STEP_UP_X, LED_Y, STEP_W, ROW_H, COL_BTN);
+    draw_plus_mark(base, STEP_UP_X, LED_Y, STEP_W, ROW_H);
+    pct_label(label, led);
+    draw_text_centered(base, STEP_DN_X + STEP_W, LED_Y,
+                       STEP_UP_X - (STEP_DN_X + STEP_W), ROW_H, label, COL_TEXT);
+
+    draw_label(base, CPU_Y, "CPU");
+    {
+        char *d = label;
+        if (cpu >= 0) {
+            d = put_uint(d, cpu);
+            *d++ = '%';
+        }
+        if (temp >= 0) {
+            if (d != label)
+                *d++ = ' ';
+            d = put_uint(d, temp);
+            *d++ = '~';
+            *d++ = 'C';
+        }
+        *d = '\0';
+    }
+    fill_visual(base, VAL_X, CPU_Y, VAL_W, ROW_H, COL_BTN);
+    draw_text_centered(base, VAL_X, CPU_Y, VAL_W, ROW_H, label, COL_TEXT);
+
     draw_label(base, FPS_Y, "FPS");
     fps_label(label, fps);
     fill_visual(base, VAL_X, FPS_Y, VAL_W, ROW_H, COL_BTN);
@@ -1049,6 +1272,7 @@ int overlay_touch(int down, int was_down, int lx, int ly)
     int on_tab, on_panel, on_mode, on_jog_dn, on_jog_up;
     int on_usb1, on_usb2, on_blue, on_rgb, on_band, on_quant_on, on_quant_off, on_power;
     int on_tag, on_tags, on_find;
+    int on_scr_dn, on_scr_up, on_led_dn, on_led_up;
     int fresh;
     unsigned long long now;
     static unsigned long long last_ev_ms;
@@ -1081,6 +1305,10 @@ int overlay_touch(int down, int was_down, int lx, int ly)
         on_usb1 = in_rect(vx, vy, USB_L_X, USB_Y, USB_HALF, ROW_H);
         on_usb2 = in_rect(vx, vy, USB_R_X, USB_Y, USB_HALF, ROW_H);
         on_power = in_rect(vx, vy, PAN_X + 6, PWR_Y, PAN_W - 12, ROW_H);
+        on_scr_dn = in_rect(vx, vy, STEP_DN_X, SCR_Y, STEP_W, ROW_H);
+        on_scr_up = in_rect(vx, vy, STEP_UP_X, SCR_Y, STEP_W, ROW_H);
+        on_led_dn = in_rect(vx, vy, STEP_DN_X, LED_Y, STEP_W, ROW_H);
+        on_led_up = in_rect(vx, vy, STEP_UP_X, LED_Y, STEP_W, ROW_H);
         if (!ov_is_open()) {
             ov_grab = on_tab;
             if (on_tab) {
@@ -1111,6 +1339,14 @@ int overlay_touch(int down, int was_down, int lx, int ly)
                 nudge_jog(-1);
             else if (on_jog_up)
                 nudge_jog(1);
+            else if (on_scr_dn)
+                nudge_screen(-1);
+            else if (on_scr_up)
+                nudge_screen(1);
+            else if (on_led_dn)
+                nudge_led(-1);
+            else if (on_led_up)
+                nudge_led(1);
             else if (on_blue)
                 request_wave(1);
             else if (on_rgb)

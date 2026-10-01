@@ -2071,6 +2071,18 @@ static signed char led_pfl_last[2] = { -1, -1 };  /* mixer PFL LED state */
 #define LED_PAD_FIRST   18
 #define LED_PAD_COUNT   8
 static int led_pad_last[2][LED_PAD_COUNT];  /* last MIDI velocity, -1 unknown */
+static signed char led_mc_last = -1;        /* master cue LED (strips 3/4) */
+
+/* MOD panel LEDS row: led_pct in the overlay shm, 10..100, 0 = unset (full).
+ * Simple LEDs get Note On velocity 127 * pct; RGB pads scale each channel
+ * before the 2-bit squash. A change re-sends every LED. */
+static int led_pct_cur = PCT_MAX;
+
+static int led_vel_on(void)
+{
+     int v = (127 * led_pct_cur + 50) / 100;
+     return v < 1 ? 1 : v;
+}
 
 /* rbp LedStat ids we have identified (channels 1/2 = deck 1/2):
  *   49 = deck PLAY  (state 2 while paused  -> panel must blink)
@@ -2209,7 +2221,7 @@ static void led_apply(int deck, int idx, int on)
      signed char want = (signed char)(on ? 1 : 0);
      if (led_last[deck][idx] == want)
           return;
-     if (!led_send(4 + deck, led_notes[idx], on ? 0x7f : 0x00))
+     if (!led_send(4 + deck, led_notes[idx], on ? led_vel_on() : 0x00))
           return;                        /* retry next tick */
      led_last[deck][idx] = want;
      if (led_verbose)
@@ -2252,9 +2264,21 @@ static int midi_note(int midi_ch, int note, int vel)
  * 6-bit colour). */
 static int pad_bright_bit = -1;
 
+/* 0..255 -> 2-bit level at the LEDS brightness. A channel that is lit at
+ * full brightness never drops to 0, or a dim setting would turn coloured
+ * pads off; at 100% this is the plain top-2-bits squash. */
+static int pad_level(int c)
+{
+     int lv;
+     if ((c >> 6) <= 0)
+          return 0;
+     lv = (c * led_pct_cur / 100) >> 6;
+     return lv < 1 ? 1 : lv;
+}
+
 static unsigned char pad_encode_rgb(int r, int g, int b)
 {
-     unsigned char v = (unsigned char)(((r >> 6) << 4) | ((g >> 6) << 2) | (b >> 6));
+     unsigned char v = (unsigned char)((pad_level(r) << 4) | (pad_level(g) << 2) | pad_level(b));
      if (pad_bright_bit < 0) {
           const char *s = getenv("PAD_BRIGHT");
           pad_bright_bit = (s && *s) ? (atoi(s) != 0) : 0;
@@ -2297,7 +2321,7 @@ static void led_apply_g(int idx, int note, int on)
      signed char want = (signed char)(on ? 1 : 0);
      if (led_last_g[idx] == want)
           return;
-     if (!midi_note(15, note, on ? 0x7f : 0x00))
+     if (!midi_note(15, note, on ? led_vel_on() : 0x00))
           return;
      led_last_g[idx] = want;
      if (led_verbose)
@@ -2314,6 +2338,24 @@ static void led_refresh(void)
      blink = (led_tick & 8) ? 1 : 0;      /* ~400 ms on / off */
      led_blink_phase = blink;
 
+     {
+          int pct;
+          if (!jog_ov)
+               jog_ov_load();
+          pct = jog_ov ? jog_ov->led_pct : 0;
+          if (pct < LED_PCT_MIN || pct > PCT_MAX)
+               pct = PCT_MAX;
+          if (pct != led_pct_cur) {
+               led_pct_cur = pct;
+               memset(led_last, -1, sizeof(led_last));
+               memset(led_last_g, -1, sizeof(led_last_g));
+               memset(led_pfl_last, -1, sizeof(led_pfl_last));
+               memset(led_pad_last, -1, sizeof(led_pad_last));
+               led_mc_last = -1;
+               klog("knobshim2: LED brightness %d%% (vel %d)\n", pct, led_vel_on());
+          }
+     }
+
      /* global LEDs, straight from rbp (id/ch -> panel note) */
      for (int g = 0; g < LEDG_COUNT; g++) {
           int st = ledstat_state(led_g_tab[g].id, 0);
@@ -2327,18 +2369,17 @@ static void led_refresh(void)
           if (cue < 0)
                continue;
           if (led_pfl_last[m] != (signed char)cue) {
-               if (midi_note(m, 13, cue ? 0x7f : 0x00))
+               if (midi_note(m, 13, cue ? led_vel_on() : 0x00))
                     led_pfl_last[m] = (signed char)cue;
           }
      }
      /* master cue LED on strips 3/4 (note 13) */
      {
-          static signed char mc_last = -1;
           int mc = me_get_master_cue();
-          if (mc >= 0 && mc_last != (signed char)mc) {
-               if (midi_note(2, 13, mc ? 0x7f : 0x00) &&
-                   midi_note(3, 13, mc ? 0x7f : 0x00))
-                    mc_last = (signed char)mc;
+          if (mc >= 0 && led_mc_last != (signed char)mc) {
+               if (midi_note(2, 13, mc ? led_vel_on() : 0x00) &&
+                   midi_note(3, 13, mc ? led_vel_on() : 0x00))
+                    led_mc_last = (signed char)mc;
           }
      }
 

@@ -25,7 +25,7 @@ Build a single target during development, e.g.
 
 | File | Role | SC Live 4 |
 |---|---|---|
-| `fbshim-tsc.c` → `fbshim.so` | fb ioctl shim (1280×800 RGB565 logical fb; frames paced by the vblank-blocking pan, with an 8 ms floor; skips rbp's own 16 ms `usleep` frame limiter at `0x1a6920`) + tsc2007 touch emulation from `/dev/input/event0`. `overlay_playmode.c` draws a MOD tab. Each row is the setting name, then the value: play mode, jog sensitivity, waveform color, deck quantize, track tag/list/search, USB eject, power, and a read-only FPS counter | used as-is |
+| `fbshim-tsc.c` → `fbshim.so` | fb ioctl shim (1280×800 RGB565 logical fb; frames paced by the vblank-blocking pan, with an 8 ms floor; skips rbp's own 16 ms `usleep` frame limiter at `0x1a6920`) + tsc2007 touch emulation from `/dev/input/event0`. `overlay_playmode.c` draws a MOD tab. Each row is the setting name, then the value: play mode, jog sensitivity, waveform color, deck quantize, track tag/list/search, USB eject, screen and LED brightness, read-only CPU load/temperature and FPS, and power (always last) | used as-is |
 | `knobshim2.c` → `knobshim.so` | SC Live 4 MIDI control surface → rbp keycodes, plus panel LED and VU output | **SC Live 4-specific** |
 | `audioshim.c` → `audioshim.so` | presents the RX3 ALSA devices over the JP21 `hw:1,0` codec | **SC Live 4-specific** |
 | `crashcatch.c` → `crashcatch.so` | SIGSEGV `pc`/`lr` → `/tmp/crash.log` | diagnostic |

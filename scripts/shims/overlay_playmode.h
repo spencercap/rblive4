@@ -15,12 +15,22 @@ struct rb_overlay_shm {
     /* Displayed frames per second, x10, measured at FBIOPAN by fbshim.
      * Last field: rot16 and knobshim map the older, shorter struct. */
     volatile int fps_x10;
+    /* Screen backlight and panel LED brightness, percent. 0 = not set yet:
+     * fbshim fills screen_pct from the current backlight, and LEDs run at
+     * full. Kept in /tmp, so a player restart keeps them; a reboot does not. */
+    volatile int screen_pct;
+    volatile int led_pct;
 };
 
 #define JOG_GAIN_MIN  200   /* 20%  */
 #define JOG_GAIN_MAX  2000  /* 200% */
 #define JOG_GAIN_STEP 100   /* 10%  */
 #define JOG_GAIN_DEF  400   /* 40%, shown on the MOD tab */
+
+#define PCT_STEP        10
+#define SCREEN_PCT_MIN  10   /* never fully dark: the panel is the only way back */
+#define LED_PCT_MIN     10
+#define PCT_MAX         100
 
 #define RB_OVERLAY_SHM "/tmp/rb-overlay"
 
