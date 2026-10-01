@@ -24,6 +24,17 @@ The driver changes are in
 regenerated against DirectFB `2199f40b1`. `/tmp/rb-rot` reports the rotate and
 draw times about every 2 s.
 
+### Audio: no more clicks at 60 fps
+
+The display now uses more CPU, and occasional clicks showed up. They were
+underruns. The buffer is 128 frames (2.9 ms), the writer thread `JuceALSA`
+ran at normal priority, and JUCE's stop threshold turns an underrun into
+silent gaps instead of an error. audioshim now runs only that thread at
+SCHED_FIFO 40 (below the RT kernel's IRQ threads). Over 60 s of playback,
+underrun windows went from 6 to 0, and the fullest the buffer got to empty
+went from 183 frames to 62. See
+[docs/09](docs/09-audio.md#underruns-and-clicks).
+
 ### MOD menu: FPS
 
 A read-only **FPS** row at the bottom of the panel shows displayed frames per

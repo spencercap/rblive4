@@ -143,6 +143,39 @@ static void init_real_alsa(void)
 #define MAX_FRAMES 4096
 static int32_t g_mix8ch[MAX_FRAMES * 8];
 static unsigned long g_write_count = 0;
+/* Underruns on the real device. Each one is a re-prepare plus a gap, which
+ * is heard as a click. Logged as xr= on the periodic writei line. */
+static unsigned long g_xruns = 0;
+
+/* The period is 64 frames x 2 (2.9 ms of buffer). JuceALSA runs SCHED_OTHER,
+ * so a busy frame on the display side (gui_task plus the rotate threads) could
+ * keep it off a core long enough to drain that and click. The kernel is
+ * PREEMPT_RT: run the writer SCHED_FIFO, below the IRQ threads (50) so the
+ * codec's own interrupt still wins. AUDIO_RT_PRIO=0 leaves it as it was.
+ * This is the one exception to the scheduler stubs at the end of this file,
+ * which keep every other rbp thread off SCHED_FIFO; it uses the raw syscall
+ * so those stubs do not swallow it. */
+#define AUDIO_SCHED_FIFO 1
+static void audio_rt_once(void)
+{
+    static pid_t done_tid;
+    pid_t tid = (pid_t)syscall(SYS_gettid);
+    struct { int sched_priority; } sp;
+    const char *e;
+    int prio = 40, res;
+    if (done_tid == tid)
+        return;
+    done_tid = tid;
+    e = getenv("AUDIO_RT_PRIO");
+    if (e)
+        prio = atoi(e);
+    if (prio <= 0 || prio > 99)
+        return;
+    memset(&sp, 0, sizeof(sp));
+    sp.sched_priority = prio;
+    res = (int)syscall(SYS_sched_setscheduler, 0, AUDIO_SCHED_FIFO, &sp);
+    alog("audioshim: writer tid %d SCHED_FIFO %d res=%d\n", (int)tid, prio, res);
+}
 
 /* shared with knobshim2.so (booth/speaker knob, CC15 ch15) */
 extern volatile float g_speaker_gain;
@@ -635,8 +668,10 @@ snd_pcm_sframes_t snd_pcm_writei(snd_pcm_t *pcm, const void *buffer, snd_pcm_ufr
     snd_pcm_sframes_t written = 0;
     /* Output all 8 channels to real hardware */
     if (g_real_playback && real_snd_pcm_writei) {
+        audio_rt_once();
         written = real_snd_pcm_writei(g_real_playback, g_mix8ch, size);
         if (written < 0) {
+            g_xruns++;
             if (real_snd_pcm_prepare)
                 real_snd_pcm_prepare(g_real_playback);
             written = real_snd_pcm_writei(g_real_playback, g_mix8ch, size);
@@ -647,8 +682,8 @@ snd_pcm_sframes_t snd_pcm_writei(snd_pcm_t *pcm, const void *buffer, snd_pcm_ufr
     }
 
     if ((g_write_count % 500) == 1) {
-        alog("audioshim: writei #%lu frames=%lu written=%ld peak_m=%d peak_hp=%d sg=%.4f cm=%.4f cg=%.4f\n",
-             g_write_count, size, (long)written, s_peak_master, s_peak_hp,
+        alog("audioshim: writei #%lu frames=%lu written=%ld xr=%lu peak_m=%d peak_hp=%d sg=%.4f cm=%.4f cg=%.4f\n",
+             g_write_count, size, (long)written, g_xruns, s_peak_master, s_peak_hp,
              (double)speaker_gain(), (double)g_cue_mix, (double)g_cue_gain);
         /* cue/master alignment diagnostic removed (direct routing) */
         s_peak_master = 0;

@@ -99,6 +99,46 @@ STARTUP_MUTE_MS=1500 STARTUP_FADE_MS=300   # defaults
 STARTUP_MUTE_MS=0                          # disable
 ```
 
+## Underruns and clicks
+
+rbp opens `hw:1,0` with 2 periods of 64 frames, so there is **128 frames
+(2.9 ms)** of buffer. JUCE sets `stop_threshold` and `silence_size` to the
+boundary. An underrun therefore never stops the stream or returns `-EPIPE`:
+the kernel plays silence into the gap, and you hear a click. `writei` reports
+nothing.
+
+The audioshim scheduler stubs (end of `audioshim.c`) keep rbp's threads off
+SCHED_FIFO, because rbp's RX3 thread setup locks up a core on Rockchip. That
+left `JuceALSA` at SCHED_OTHER, competing for 4 cores with `gui_task` and the
+display's 3 rotate threads. At 60 fps that was enough to drain the buffer
+now and then.
+
+audioshim now puts **only the thread that writes the real device** on
+SCHED_FIFO priority 40, through the raw syscall, so the stubs don't swallow
+it. The kernel is PREEMPT_RT. 40 is below the IRQ threads (50), so the
+codec's own interrupt still wins. `AUDIO_RT_PRIO` overrides the priority, and
+`0` turns it off. `/tmp/audioshim.log` shows
+`writer tid N SCHED_FIFO 40 res=0`.
+
+Measured with music playing, 240 quarter-second samples (60 s):
+
+| Writer | windows with an underrun | ≥112 of 128 frames used | worst |
+|---|---|---|---|
+| SCHED_OTHER (before) | 6 | 74 | 183 (drained) |
+| SCHED_FIFO 40 | 0 | 0 | 62 |
+
+To check, read `avail_max`. The kernel resets it on every status read, so
+each read covers the time since the previous one. A value of 128 or more
+means the buffer ran dry:
+
+```sh
+S=/proc/asound/card1/pcm0p/sub0/status
+cat $S >/dev/null; sleep 0.25; awk '/avail_max/{print $3}' $S
+```
+
+`xr=` on the periodic `writei` log line counts only the underruns that do
+return an error. With this stop threshold that is normally 0.
+
 ## Notes
 
 * The speaker/booth and master-out gains are linear (`val/127`); a log curve

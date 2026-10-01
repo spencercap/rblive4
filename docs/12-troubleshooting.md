@@ -46,6 +46,7 @@ Symptom → cause → fix.
 | No MASTER CUE button on the SC Live 4 | XDJ-RX3 has one; SC Live 4 doesn't | strips 3/4 PFL toggle `setMasterOutHeadphoneCue` ([09](09-audio.md)) |
 | Loud ~100 ms noise on the speakers at startup | codec/DSP start transient | all-channel `STARTUP_MUTE_MS` mute + fade ([09](09-audio.md)) |
 | `-EBUSY` opening `hw:1,0` | `engine.service` holds the codec | stop it first |
+| Occasional clicks, louder during busy screens | underruns: 2.9 ms buffer, `JuceALSA` at SCHED_OTHER | current audioshim runs the writer at SCHED_FIFO 40. Check `avail_max` ([09](09-audio.md#underruns-and-clicks)) |
 | Knob volume → loud distortion | software gain on the ch 6/7 stream | run fixed `SPEAKER_GAIN=1.0` ([09](09-audio.md)) |
 
 ## Tooling / build
