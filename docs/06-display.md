@@ -135,10 +135,10 @@ Each of these cost at least one refresh per frame:
   `FPS 60.4`. fbshim counts every `FBIOPAN_DISPLAY` over a 1 s window. The row
   only updates while the panel is open, because repainting the closed tab
   every second would draw into the scanout buffer.
-* Over SSH, the same number ×10 is the last word of the overlay shm:
+* Over SSH, the same number ×10 is the 11th word of the overlay shm (`fps_x10`):
 
   ```sh
-  hexdump -e '11/4 "%d " "\n"' /tmp/rb-overlay   # ... 603  ->  60.3 fps
+  hexdump -e '13/4 "%d " "\n"' /tmp/rb-overlay | cut -d' ' -f11   # 603 -> 60.3 fps
   ```
 
 * `/tmp/rb-rot` is rewritten about every 2 s by the fbdev driver:

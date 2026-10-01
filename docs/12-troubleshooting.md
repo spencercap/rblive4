@@ -67,6 +67,6 @@ Symptom → cause → fix.
 * `cat /tmp/audioshim.log` — negotiated params + `sg`/peaks.
 * `cat /tmp/dfbdig*.log` — DirectFB bring-up (`ROTINIT` line).
 * `cat /tmp/rb-rot` — frames per 2 s, rotate avg/max µs, rbp draw µs, threads.
-* `hexdump -e '11/4 "%d " "\n"' /tmp/rb-overlay` — last number is fps ×10.
+* `hexdump -e '13/4 "%d " "\n"' /tmp/rb-overlay | cut -d' ' -f11` — fps ×10.
 * `aplay`/`amixer`/`alsactl` for audio probing. No `strace`/`gdb` on device —
   cross-build and `scp` if needed.
