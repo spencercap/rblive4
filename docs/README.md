@@ -17,6 +17,7 @@ Documentation for the XDJ-RX3 `rb` → Denon SC Live 4 port.
 | 10 | [usb](10-usb.md) | USB stick + rekordbox database |
 | 11 | [runtime-launcher](11-runtime-launcher.md) | launch sequence / systemd integration |
 | 12 | [troubleshooting](12-troubleshooting.md) | symptom → cause → fix |
+| 13 | [upgrade-5.0.4](13-upgrade-5.0.4.md) | 4.3.1 → Engine OS 5.0.4, root restore, player reinstall |
 
 The matching PrimeBox doc is the upstream reference for anything shared; links
 are in [03-port-plan.md](03-port-plan.md).
