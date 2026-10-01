@@ -109,7 +109,9 @@ Each of these cost at least one refresh per frame:
    path (`fbdev_rotate_left16`) now:
    * works in 32×32 tiles, so the strided writes stay in cache;
    * converts with two 256-entry tables (`lo[px & 0xff] | hi[px >> 8]`);
-   * tests the MOD tab and panel rects once per tile;
+   * tests the MOD tab and panel rects once per tile, and skips tiles that lie
+     wholly inside them (those pixels are the overlay's). With the panel open,
+     this took FPS from about 53 back to 60;
    * splits the screen into bands on 3 threads. Helpers run at nice 5 so
      `JuceALSA` (SCHED_OTHER, nice 0) still gets a core. `DFB_ROT_THREADS`
      (1 to 4) overrides the count;

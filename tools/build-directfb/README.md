@@ -52,7 +52,8 @@ DirectFB tree yourself and apply the diff.
    * no `FBIO_WAITFORVSYNC` before the pan when rotating, since the
      `rockchipdrmfb` pan already blocks until vblank;
    * `fbdev_rotate_left16()`: 32×32 tiles, a two-table RGB565→RGB32
-     lookup, an overlay test per tile, bands on `DFB_ROT_THREADS` threads
+     lookup, an overlay test per tile (tiles wholly under the MOD tab or
+     open panel are skipped), bands on `DFB_ROT_THREADS` threads
      (default 3, helpers at nice 5), and skipping tiles that are unchanged
      against a per-page shadow copy;
    * timing in `/tmp/rb-rot` about every 2 s;

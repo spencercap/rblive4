@@ -50,6 +50,12 @@ EJECT, **STATS**, POWER. POWER always stays last.
 Both brightness values are kept in `/tmp/rb-overlay` (`screen_pct`,
 `led_pct`), so they survive a player restart but not a reboot.
 
+The label column is 8 px wider so SCREEN clears its − button. With the
+panel open the display dropped to about 53 fps, because every tile under
+the panel was converted pixel by pixel. The fbdev driver now skips tiles
+that lie wholly inside the MOD rects, and the display holds 60 fps with the
+panel open. The menu image in the docs is a fresh 3× capture from the unit.
+
 ### MOD menu: FPS
 
 Displayed frames per second, for example `60.4`, now part of the **STATS**

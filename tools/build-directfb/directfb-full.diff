@@ -212,7 +212,7 @@ index cf4ff8fb7..3a5cf4f6e 100644
  	fbdev.c			\
  	fbdev_surface_pool.c	\
 diff --git a/systems/fbdev/fbdev.c b/systems/fbdev/fbdev.c
-index 36c295e97..77c2360c8 100644
+index 36c295e97..d0cbce61c 100644
 --- a/systems/fbdev/fbdev.c
 +++ b/systems/fbdev/fbdev.c
 @@ -33,6 +33,7 @@
@@ -245,7 +245,7 @@ index 36c295e97..77c2360c8 100644
  #include <direct/memcpy.h>
  #include <direct/messages.h>
  #include <direct/signals.h>
-@@ -116,6 +122,371 @@ static int fbdev_ioctl( int request, void *arg, int arg_size );
+@@ -116,6 +122,386 @@ static int fbdev_ioctl( int request, void *arg, int arg_size );
  
  #define FBDEV_IOCTL(request,arg)   fbdev_ioctl( request, arg, sizeof(*(arg)) )
  
@@ -320,6 +320,13 @@ index 36c295e97..77c2360c8 100644
 +     return x < rx + rw && rx < x + w && y < ry + rh && ry < y + h;
 +}
 +
++static int
++rect_holds( int x, int y, int w, int h, int rx, int ry, int rw, int rh )
++{
++     return rw > 0 && rh > 0 &&
++            x >= rx && y >= ry && x + w <= rx + rw && y + h <= ry + rh;
++}
++
 +/* RGB565 -> RGB32 is an OR of one entry per source byte: red and blue sit
 + * in one byte each, and green's replicated low bits come from its top two
 + * bits, which are in the high byte. Two 1 KB tables replace the shifts. */
@@ -360,6 +367,14 @@ index 36c295e97..77c2360c8 100644
 +               int y1 = (y0 + ROT_TILE < j->sh) ? y0 + ROT_TILE : j->sh;
 +               int keep = rect_hits( x0, y0, x1 - x0, y1 - y0, j->tab_x, j->tab_y, j->tab_w, j->tab_h ) ||
 +                          rect_hits( x0, y0, x1 - x0, y1 - y0, j->pan_x, j->pan_y, j->pan_w, j->pan_h );
++               /* A tile wholly under the MOD tab or the open panel is the
++                * overlay's: nothing to rotate. Only edge tiles go per pixel.
++                * The shadow is left stale there, which is fine: closing the
++                * panel changes the rects and forces a full redraw. */
++               if (keep &&
++                   (rect_holds( x0, y0, x1 - x0, y1 - y0, j->tab_x, j->tab_y, j->tab_w, j->tab_h ) ||
++                    rect_holds( x0, y0, x1 - x0, y1 - y0, j->pan_x, j->pan_y, j->pan_w, j->pan_h )))
++                    continue;
 +               if (j->shadow) {
 +                    /* Skip a tile whose source matches what this fb page
 +                     * already shows. Overlay tiles always go through. */
@@ -617,7 +632,7 @@ index 36c295e97..77c2360c8 100644
  FBDev *dfb_fbdev = NULL;
  
  /******************************************************************************/
-@@ -461,6 +832,7 @@ system_initialize( CoreDFB *core, void **data )
+@@ -461,6 +847,7 @@ system_initialize( CoreDFB *core, void **data )
  
       dfb_fbdev->core   = core;
       dfb_fbdev->shared = shared;
@@ -625,7 +640,7 @@ index 36c295e97..77c2360c8 100644
  
       page_size = direct_pagesize();
  
-@@ -515,10 +887,82 @@ system_initialize( CoreDFB *core, void **data )
+@@ -515,10 +902,82 @@ system_initialize( CoreDFB *core, void **data )
                      "Could not disable console acceleration!\n" );
            goto error;
       }
@@ -708,7 +723,7 @@ index 36c295e97..77c2360c8 100644
       shared->orig_cmap_memory = SHMALLOC( pool_data, 256 * 2 * 4 );
       if (!shared->orig_cmap_memory) {
            ret = D_OOSHM();
-@@ -598,6 +1042,15 @@ system_initialize( CoreDFB *core, void **data )
+@@ -598,6 +1057,15 @@ system_initialize( CoreDFB *core, void **data )
  
  error:
       if (shared) {
@@ -724,7 +739,7 @@ index 36c295e97..77c2360c8 100644
            if (shared->orig_cmap_memory)
                 SHFREE( pool_data, shared->orig_cmap_memory );
  
-@@ -1188,7 +1641,9 @@ primaryInitLayer( CoreLayer                  *layer,
+@@ -1188,7 +1656,9 @@ primaryInitLayer( CoreLayer                  *layer,
       /* fill out the default configuration */
       config->flags      = DLCONF_WIDTH       | DLCONF_HEIGHT |
                            DLCONF_PIXELFORMAT | DLCONF_BUFFERMODE;
@@ -735,7 +750,7 @@ index 36c295e97..77c2360c8 100644
       config->width      = dfb_config->mode.width  ? dfb_config->mode.width  : default_mode->xres;
       config->height     = dfb_config->mode.height ? dfb_config->mode.height : default_mode->yres;
  
-@@ -1441,7 +1896,19 @@ primarySetRegion( CoreLayer                  *layer,
+@@ -1441,7 +1911,19 @@ primarySetRegion( CoreLayer                  *layer,
                      return ret;
            }
            else {
@@ -756,7 +771,7 @@ index 36c295e97..77c2360c8 100644
                 if (ret)
                      return ret;
            }
-@@ -1467,6 +1934,38 @@ primaryRemoveRegion( CoreLayer             *layer,
+@@ -1467,6 +1949,38 @@ primaryRemoveRegion( CoreLayer             *layer,
       return DFB_OK;
  }
  
@@ -795,7 +810,7 @@ index 36c295e97..77c2360c8 100644
  static DFBResult
  primaryFlipRegion( CoreLayer             *layer,
                     void                  *driver_data,
-@@ -1481,15 +1980,71 @@ primaryFlipRegion( CoreLayer             *layer,
+@@ -1481,15 +1995,71 @@ primaryFlipRegion( CoreLayer             *layer,
  
       D_DEBUG_AT( FBDev_Primary, "%s()\n", __FUNCTION__ );
  
@@ -873,7 +888,7 @@ index 36c295e97..77c2360c8 100644
  
       if ((flags & DSFLIP_WAIT) &&
           (dfb_config->pollvsync_after || !(flags & DSFLIP_ONSYNC)))
-@@ -1542,6 +2097,10 @@ dfb_fbdev_pan( int xoffset, int yoffset, bool onsync )
+@@ -1542,6 +2112,10 @@ dfb_fbdev_pan( int xoffset, int yoffset, bool onsync )
  
       var = &shared->current_var;
  
@@ -884,7 +899,7 @@ index 36c295e97..77c2360c8 100644
       if (var->xres_virtual < xoffset + var->xres) {
            D_ERROR( "DirectFB/FBDev: xres %d, vxres %d, xoffset %d\n",
                      var->xres, var->xres_virtual, xoffset );
-@@ -1670,20 +2229,24 @@ dfb_fbdev_mode_to_var( const VideoMode           *mode,
+@@ -1670,20 +2244,24 @@ dfb_fbdev_mode_to_var( const VideoMode           *mode,
       else
            var.yoffset = 0;
  
@@ -918,7 +933,7 @@ index 36c295e97..77c2360c8 100644
                 break;
  
            case DLBM_BACKSYSTEM:
-@@ -1694,6 +2257,7 @@ dfb_fbdev_mode_to_var( const VideoMode           *mode,
+@@ -1694,6 +2272,7 @@ dfb_fbdev_mode_to_var( const VideoMode           *mode,
                 return DFB_UNSUPPORTED;
       }
  
@@ -926,7 +941,7 @@ index 36c295e97..77c2360c8 100644
       /* Set pixel format */
       var.bits_per_pixel = DFB_BITS_PER_PIXEL(pixelformat);
       var.transp.length  = var.transp.offset = 0;
-@@ -1898,6 +2462,31 @@ dfb_fbdev_test_mode( const VideoMode             *mode,
+@@ -1898,6 +2477,31 @@ dfb_fbdev_test_mode( const VideoMode             *mode,
       if (ret)
            return ret;
  
@@ -958,7 +973,7 @@ index 36c295e97..77c2360c8 100644
       need_mem = DFB_BYTES_PER_LINE( config->format, var.xres_virtual ) *
                  DFB_PLANE_MULTIPLY( config->format, var.yres_virtual );
       if (shared->fix.smem_len < need_mem) {
-@@ -2012,14 +2601,33 @@ dfb_fbdev_set_mode( const VideoMode         *mode,
+@@ -2012,14 +2616,33 @@ dfb_fbdev_set_mode( const VideoMode         *mode,
            return ret;
       }
  
@@ -996,7 +1011,7 @@ index 36c295e97..77c2360c8 100644
       }
  
       if (FBDEV_IOCTL( FBIOGET_VSCREENINFO, &var2 )) {
-@@ -2032,17 +2640,28 @@ dfb_fbdev_set_mode( const VideoMode         *mode,
+@@ -2032,17 +2655,28 @@ dfb_fbdev_set_mode( const VideoMode         *mode,
       if (var.xres != var2.xres || var.xres_virtual != var2.xres_virtual ||
           var.yres != var2.yres || var.yres_virtual != var2.yres_virtual)
       {
@@ -1032,7 +1047,7 @@ index 36c295e97..77c2360c8 100644
  
       shared->current_var = var;
       dfb_fbdev_var_to_mode( &var, &shared->current_mode );
-@@ -2391,6 +3010,14 @@ dfb_fbdev_set_rgb332_palette( void )
+@@ -2391,6 +3025,14 @@ dfb_fbdev_set_rgb332_palette( void )
       return ret;
  }
  
@@ -1047,7 +1062,7 @@ index 36c295e97..77c2360c8 100644
  static FusionCallHandlerResult
  fbdev_ioctl_call_handler( int           caller,
                            int           call_arg,
-@@ -2403,6 +3030,8 @@ fbdev_ioctl_call_handler( int           caller,
+@@ -2403,6 +3045,8 @@ fbdev_ioctl_call_handler( int           caller,
       const char cursoroff_str[] = "\033[?1;0;0c";
       const char blankoff_str[] = "\033[9;0]";
  
@@ -1056,7 +1071,7 @@ index 36c295e97..77c2360c8 100644
       if (dfb_config->vt && !dfb_config->kd_graphics && call_arg == FBIOPUT_VSCREENINFO)
            ioctl( dfb_fbdev->vt->fd, KDSETMODE, KD_GRAPHICS );
  
-@@ -2416,6 +3045,8 @@ fbdev_ioctl_call_handler( int           caller,
+@@ -2416,6 +3060,8 @@ fbdev_ioctl_call_handler( int           caller,
            write( dfb_fbdev->vt->fd, blankoff_str, strlen(blankoff_str) );
       }
  

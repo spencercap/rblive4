@@ -93,13 +93,13 @@
 
 /* Name on the left, value on the right. Ten rows under the MOD tab:
  * PAN_H = 2 * PAD + rows * ROW_H + (rows - 1) * ROW_GAP. */
-#define PAN_W 340
+#define PAN_W 348
 #define PAN_H 452
 #define PAN_X ((1280 - PAN_W) / 2)
 #define PAN_Y 48
 
 #define PAD 10
-#define LAB_W 72
+#define LAB_W 80   /* fits SCREEN, the longest label */
 #define ROW_H 36
 #define ROW_GAP 8
 #define LAB_X (PAN_X + PAD)
