@@ -20,7 +20,13 @@ struct rb_overlay_shm {
      * full. Kept in /tmp, so a player restart keeps them; a reboot does not. */
     volatile int screen_pct;
     volatile int led_pct;
+    /* Beat meter in the top bar, right of MOD. 0 = not set yet = BARS. */
+    volatile int beat_mode;
 };
+
+#define BEAT_OFF   1
+#define BEAT_BARS  2
+#define BEAT_DRIFT 3
 
 #define JOG_GAIN_MIN  200   /* 20%  */
 #define JOG_GAIN_MAX  2000  /* 200% */

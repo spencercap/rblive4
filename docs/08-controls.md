@@ -40,6 +40,7 @@ A **MOD** tab at the top center of the screen opens this panel. Taps on the tab 
 | **MODE** | Each tap cycles **SINGLE → CONTINUE → REPEAT → ALL REPEAT**. The choice is saved in `XdjSettings.dat`. | Utility play mode, `UiSetUtilAutoPlayMode` |
 | **JOG** | Jog sensitivity for both decks. **−** and **+** step by 10% between 20% and 200%. It starts at 40% of the original wheel calibration and lasts until reboot. | No RX3 key. The shim scales each jog step. |
 | **WAVE** | Waveform color: **BLUE**, **RGB**, or **3BAND**. | Waveform color setting (`CmnFunc` waveform color 1 / 3 / 4) |
+| **BEAT** | The beat meter in the top bar, right of the MOD tab. **OFF**, **BARS** (default), or **DRIFT**. See [Beat meter](#beat-meter). Lasts until reboot. | No RX3 equivalent. The RX3 marks downbeats only with the small red ticks over each waveform. |
 | **QUANT** | **ON** or **OFF** for both decks. **OFF** lets cue land off the beat grid. | The QUANTIZE button, `UiSetQuantizeOnOff`. The settings entry "quantize beat value" only changes the grid size and leaves snapping on. |
 | **TRACK** | **TAG** adds the highlighted browse track to the Tag List. **TAGS** opens the Tag List. **FIND** opens Search, the screen with the on-screen keyboard. TAGS and FIND close the panel so that screen is visible. | **TAG** is Tag Track (`0x420e`, `UiKey_AddTag`). **TAGS** is TAG LIST (`0x0203`). **FIND** is SEARCH (`0x0205`). |
 | **SCREEN** | Screen backlight. **−** and **+** step by 10% between 10% and 100% of `max_brightness`. The first look shows what Engine OS left it at. It never goes fully dark, since the screen is the only way to turn it back up. Lasts until reboot. | No RX3 key. fbshim writes `/sys/class/backlight/mipi-backlight/brightness`. |
@@ -47,6 +48,26 @@ A **MOD** tab at the top center of the screen opens this panel. Taps on the tab 
 | **EJECT** | Both USB slots are shown, labeled with a shortened volume name. The first tap on a slot shows **YES**. The **YES** tap ejects that stick. | No RX3 key. `usb-watch.sh` releases the mount. |
 | **STATS** | Read-only, for example `CPU 38%  FPS 60.4`. **CPU** is the busy share of all 4 cores over the last second (`/proc/stat`). **FPS** is displayed frames per second, counted at each `FBIOPAN_DISPLAY` ([06](06-display.md#frame-rate)). Updates while the panel is open. | No RX3 equivalent. |
 | **POWER** | Always the last row. The first tap shows **YES**. The **YES** tap ejects both sticks, then powers the unit off. Closing the panel before **YES** cancels it. | No RX3 key. The launcher handles the shutdown. |
+
+### Beat meter
+
+![Beat meter: BARS above, DRIFT below](beat-meter.png)
+
+Both views use the blank part of the top bar between the MOD tab and the recording timer (x 690 to 1072). Deck 1 is the top row and deck 2 is the bottom row, on the same x scale, so you compare positions straight down.
+
+**BARS** shows one bar, 4 beats, per deck. The current beat lights up and fills left to right as the beat passes. Beat 1 (the downbeat, a red tick in rbp's waveform) is red. When two decks are in phase, their fill edges sit on the same x. When their downbeats also line up, the same cell is lit in both rows. The deck number is orange on the sync master and grey when the deck has no beat grid.
+
+**DRIFT** compares the other deck with a reference deck. The reference is the sync master, or deck 1 when there is none. The top row is a center-zero gauge spanning half a beat either side. A block right of center means the other deck is ahead, so slow it down or nudge the jog back. The bottom row shows:
+
+* the offset in ms (`+12MS`). It is green within 8 ms, amber within 30 ms, and red beyond that.
+* the tempo difference (`BPM +0.40`, or `BPM =` within 0.05 BPM).
+* `BEAT +1` (or `-1`, `+2`) when the beats line up but the downbeats do not.
+
+The phase is wrapped to half a beat, so a mix that is a whole beat off still reads as locked, with `BEAT` showing the difference.
+
+How it reads the grid: `PlayEngine::getBeatPosInfo(ch)` (`0x5f5bc`, through the PlayEngine pointer at `0x011497d0`) returns a `common::BeatPosition`. Its beats are a vector of 8-byte entries at `+52` / `+56`, each holding the beat in bar (1–4, u16), BPM ×100 (u16), and time in ms (u32). The grid offset is at `+40`. Each frame the overlay finds the beat at `getPlayingTime(ch) − offset`, the same lookup the engine's `Quantize` code does, and computes the bar position from it. It only reads. The engine's own `Quantize::calc*Beat*` helpers write into the `BeatPosition`, so the overlay does not call them. Live BPM is the grid BPM × (1 + `getTempoX100` / 10000). `/tmp/rb-beat` logs both decks once a second while the meter is on, along with the slowest meter paint in µs (about 300 µs).
+
+The meter is painted on every frame, after the rotate and before the pan. rbp's pixels under it are black and unchanged, so the driver's unchanged-tile skip leaves the meter alone. When the meter is turned off, its last frame stays until the panel closes. Closing the panel forces a full redraw, which clears it.
 
 ## Browse buttons
 

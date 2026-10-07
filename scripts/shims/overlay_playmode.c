@@ -4,7 +4,8 @@
  * and steals taps before they reach rbp. A MOD tab at the top center of
  * the upright UI opens a panel. Each row names the setting on the left,
  * then the value: MODE (SINGLE, CONTINUE, REPEAT, ALL REPEAT), JOG
- * (− percent +), WAVE (BLUE, RGB, 3BAND), QUANT (ON, OFF), TRACK
+ * (− percent +), WAVE (BLUE, RGB, 3BAND), BEAT (OFF, BARS, DRIFT: the beat
+ * meter right of the tab, see beat_paint), QUANT (ON, OFF), TRACK
  * (TAG, TAGS, FIND), SCREEN (− backlight percent +), LEDS (− panel LED
  * percent +, applied by knobshim), EJECT, STATS (read-only: CPU load percent
  * and display frames per second, counted at each FBIOPAN), and POWER.
@@ -91,10 +92,10 @@
 #define TAB_X ((1280 - TAB_W) / 2)
 #define TAB_Y 8
 
-/* Name on the left, value on the right. Ten rows under the MOD tab:
+/* Name on the left, value on the right. Eleven rows under the MOD tab:
  * PAN_H = 2 * PAD + rows * ROW_H + (rows - 1) * ROW_GAP. */
 #define PAN_W 348
-#define PAN_H 452
+#define PAN_H 496
 #define PAN_X ((1280 - PAN_W) / 2)
 #define PAN_Y 48
 
@@ -118,22 +119,23 @@
 #define WAVE_X VAL_X
 #define WAVE_W VAL_W
 #define WAVE_BTN ((WAVE_W - 2 * WAVE_GAP) / 3)
-#define QUANT_Y ROW_Y(3)
+#define BEAT_Y ROW_Y(3)
+#define QUANT_Y ROW_Y(4)
 #define QUANT_GAP 8
 #define QUANT_HALF ((VAL_W - QUANT_GAP) / 2)
 #define QUANT_ON_X VAL_X
 #define QUANT_OFF_X (VAL_X + QUANT_HALF + QUANT_GAP)
-#define TRACK_Y ROW_Y(4)
-#define SCR_Y  ROW_Y(5)
-#define LED_Y  ROW_Y(6)
-#define USB_Y  ROW_Y(7)
+#define TRACK_Y ROW_Y(5)
+#define SCR_Y  ROW_Y(6)
+#define LED_Y  ROW_Y(7)
+#define USB_Y  ROW_Y(8)
 #define USB_GAP 8
 #define USB_HALF ((VAL_W - USB_GAP) / 2)
 #define USB_L_X VAL_X
 #define USB_R_X (VAL_X + USB_HALF + USB_GAP)
-#define STATS_Y ROW_Y(8)
+#define STATS_Y ROW_Y(9)
 /* POWER is always the last row; add new rows above it. */
-#define PWR_Y  ROW_Y(9)
+#define PWR_Y  ROW_Y(10)
 
 #define COL_TAB    0xff1c2128u
 #define COL_PANEL  0xff121418u
@@ -201,6 +203,9 @@ static const unsigned char GLYPH_Y[7] = {0x11,0x11,0x0A,0x04,0x04,0x04,0x04};
 static const unsigned char GLYPH_Z[7] = {0x1F,0x01,0x02,0x04,0x08,0x10,0x1F};
 static const unsigned char GLYPH_DOT[7] = {0x00,0x00,0x00,0x00,0x00,0x0C,0x0C};
 static const unsigned char GLYPH_PCT[7] = {0x18,0x19,0x02,0x04,0x08,0x13,0x03};
+static const unsigned char GLYPH_PLUS[7] = {0x00,0x04,0x04,0x1F,0x04,0x04,0x00};
+static const unsigned char GLYPH_MINUS[7] = {0x00,0x00,0x00,0x1F,0x00,0x00,0x00};
+static const unsigned char GLYPH_EQ[7] = {0x00,0x00,0x1F,0x00,0x1F,0x00,0x00};
 
 /* bit 4 is the leftmost pixel */
 static const unsigned char GLYPH_DIG[10][7] = {
@@ -249,6 +254,9 @@ static const unsigned char *glyph(char c)
     case 'Z': return GLYPH_Z;
     case '.': return GLYPH_DOT;
     case '%': return GLYPH_PCT;
+    case '+': return GLYPH_PLUS;
+    case '-': return GLYPH_MINUS;
+    case '=': return GLYPH_EQ;
     default:  return NULL;
     }
 }
@@ -323,12 +331,28 @@ static void put_visual(unsigned char *base, int vx, int vy, unsigned color)
     *(unsigned *)p = color;
 }
 
+/* One visual column is one contiguous physical row, so fill column by
+ * column: the beat meter repaints every frame. */
 static void fill_visual(unsigned char *base, int x, int y, int w, int h, unsigned color)
 {
     int iy, ix;
-    for (iy = 0; iy < h; iy++)
-        for (ix = 0; ix < w; ix++)
-            put_visual(base, x + ix, y + iy, color);
+    if (x < 0) {
+        w += x;
+        x = 0;
+    }
+    if (y < 0) {
+        h += y;
+        y = 0;
+    }
+    if (x + w > 1280)
+        w = 1280 - x;
+    if (y + h > 800)
+        h = 800 - y;
+    for (ix = 0; ix < w; ix++) {
+        unsigned *p = (unsigned *)(base + (unsigned)(1279 - x - ix) * fb_pitch) + y;
+        for (iy = 0; iy < h; iy++)
+            p[iy] = color;
+    }
 }
 
 static int text_width(const char *s)
@@ -1004,6 +1028,352 @@ static void apply_track(void)
          act == 2 ? "overlay: TAGS\n" : "overlay: FIND\n");
 }
 
+/* Beat meter. rbp's own beat cue is the small red bar tick over each
+ * waveform. This draws both decks' bar position in the blank top bar right
+ * of the MOD tab, stacked on one x scale so an offset reads directly.
+ *
+ * Grid: PlayEngine::getBeatPosInfo(ch) is a common::BeatPosition. Its beats
+ * are a vector of 8-byte myBeat at +52 / +56 (beat in bar 1..4, BPM x100,
+ * time in ms), the grid offset in ms at +40. The engine looks up a beat at
+ * (playing time - offset), so this does too. Only reads: the engine's own
+ * Quantize::calc*Beat* helpers write into the BeatPosition. */
+#define DJENGINEIF_GLOBAL 0x02686178UL
+#define PLAYENGINE_GLOBAL 0x011497d0UL
+#define DJ_IS_LOADED   ((int (*)(void *, int))0x0004518c)
+#define DJ_IS_LOADING  ((int (*)(void *, int))0x0004523c)
+#define DJ_PLAY_TIME   ((int (*)(void *, int))0x00045aec)
+#define DJ_GRID_OFFSET ((int (*)(void *, int))0x0004a7b0)
+#define DJ_TEMPO_X100  ((int (*)(void *, int))0x00045dbc)
+#define DJ_SYNC_MASTER ((int (*)(void *))0x0004b450)
+#define PE_BEAT_POS    ((void *(*)(void *, int))0x0005f5bc)
+#define BEAT_LOG       "/tmp/rb-beat"
+
+/* x 690..1072 is black in rbp's top bar: MOD ends at 680, the recording
+ * dot starts near 1080. Two rows, one per deck. */
+#define MET_X 690
+#define MET_W 382
+#define MET_Y TAB_Y
+#define MET_H TAB_H
+#define MET_ROW_H 14
+#define MET_ROW0 (MET_Y + 1)
+#define MET_ROW1 (MET_Y + MET_H - 1 - MET_ROW_H)
+#define MET_LAB_W 14
+#define MET_BAR_X (MET_X + MET_LAB_W)
+#define MET_BAR_W (MET_W - MET_LAB_W)
+#define MET_GAP 4
+#define MET_CELL ((MET_BAR_W - 3 * MET_GAP) / 4)
+
+#define COL_BLACK   0xff000000u
+#define COL_CELL    0xff262b33u
+#define COL_CELL1   0xff4a1616u   /* downbeat cell, idle */
+#define COL_LIT     0xff8c96a3u
+#define COL_FILL    0xfff2f2f2u
+#define COL_LIT1    0xff7a1a1au
+#define COL_FILL1   0xffff3030u
+#define COL_MASTER  0xffff8a1cu
+#define COL_DIM     0xff5a626cu
+#define COL_LOCK    0xff2fd05au
+#define COL_NEAR    0xffffb020u
+#define COL_FAR     0xffff3030u
+
+/* Locked within this many ms and this tempo difference (BPM x100). */
+#define LOCK_MS   8
+#define NEAR_MS   30
+#define LOCK_BPM  5
+
+struct my_beat {
+    unsigned short beat;   /* 1..4 */
+    unsigned short bpm;    /* x100, before the tempo fader */
+    unsigned int   ms;
+};
+
+struct deck_beat {
+    int ok;
+    int pos;      /* bar position, milli-beats, 0..3999 */
+    int bpm;      /* x100, with the tempo fader */
+    int t, n, idx;
+};
+
+static int beat_mode(void)
+{
+    int m = ov_shm ? ov_shm->beat_mode : 0;
+    if (m != BEAT_OFF && m != BEAT_BARS && m != BEAT_DRIFT)
+        m = BEAT_BARS;
+    return m;
+}
+
+static int wrap4(int b)
+{
+    b %= 4;
+    return b < 0 ? b + 4 : b;
+}
+
+static void deck_beat_read(void *dj, void *pe, int ch, struct deck_beat *d)
+{
+    const char *bp;
+    const struct my_beat *b, *e;
+    int n, lo, hi, i, t, base, w, beat, tempo, raw;
+
+    memset(d, 0, sizeof(*d));
+    if (!(DJ_IS_LOADED(dj, ch) & 0xff) || (DJ_IS_LOADING(dj, ch) & 0xff))
+        return;
+    bp = PE_BEAT_POS(pe, ch);
+    if (!bp || *(const unsigned *)(bp + 36) == 0)
+        return;
+    /* Read the vector ends once; a load swaps the BeatPosition. */
+    b = *(const struct my_beat *const *)(bp + 52);
+    e = *(const struct my_beat *const *)(bp + 56);
+    if (!b || e <= b)
+        return;
+    n = (int)(e - b);
+    if (n < 2 || n > 200000)
+        return;
+    t = DJ_PLAY_TIME(dj, ch) - *(const int *)(bp + 40);
+
+    /* Last beat at or before t. Before the first beat or after the last,
+     * extend the grid with the nearest beat width. */
+    if (t < (int)b[0].ms) {
+        w = (int)(b[1].ms - b[0].ms);
+        if (w <= 0)
+            return;
+        i = ((int)b[0].ms - t + w - 1) / w;
+        base = (int)b[0].ms - i * w;
+        beat = wrap4((int)b[0].beat - 1 - i);
+        raw = b[0].bpm;
+        i = 0;
+    } else if (t >= (int)b[n - 1].ms) {
+        w = (int)(b[n - 1].ms - b[n - 2].ms);
+        if (w <= 0)
+            return;
+        i = (t - (int)b[n - 1].ms) / w;
+        base = (int)b[n - 1].ms + i * w;
+        beat = wrap4((int)b[n - 1].beat - 1 + i);
+        raw = b[n - 1].bpm;
+        i = n - 1;
+    } else {
+        lo = 0;
+        hi = n - 1;   /* b[lo].ms <= t < b[hi].ms */
+        while (hi - lo > 1) {
+            int mid = (lo + hi) / 2;
+            if ((int)b[mid].ms <= t)
+                lo = mid;
+            else
+                hi = mid;
+        }
+        i = lo;
+        base = (int)b[i].ms;
+        w = (int)(b[i + 1].ms - b[i].ms);
+        if (w <= 0)
+            return;
+        beat = (b[i].beat >= 1 && b[i].beat <= 4) ? b[i].beat - 1 : wrap4(i);
+        raw = b[i].bpm;
+    }
+    d->pos = beat * 1000 + (int)((long long)(t - base) * 1000 / w);
+    if (d->pos > 3999)
+        d->pos = 3999;
+    if (d->pos < 0)
+        d->pos = 0;
+    tempo = DJ_TEMPO_X100(dj, ch);
+    if (tempo <= -10000 || tempo >= 10000)
+        tempo = 0;
+    d->bpm = (int)(((long long)raw * (10000 + tempo) + 5000) / 10000);
+    d->t = t;
+    d->n = n;
+    d->idx = i;
+    d->ok = 1;
+}
+
+/* "+12" / "-3" / "0" */
+static char *put_int(char *d, int v)
+{
+    if (v > 0)
+        *d++ = '+';
+    else if (v < 0) {
+        *d++ = '-';
+        v = -v;
+    }
+    return put_uint(d, v);
+}
+
+/* BPM x100 as "+0.40", two decimals. */
+static char *put_bpm_delta(char *d, int x100)
+{
+    int a = x100 < 0 ? -x100 : x100;
+    *d++ = x100 < 0 ? '-' : '+';
+    d = put_uint(d, a / 100);
+    *d++ = '.';
+    *d++ = (char)('0' + (a / 10) % 10);
+    *d++ = (char)('0' + a % 10);
+    *d = '\0';
+    return d;
+}
+
+static void draw_deck_bar(unsigned char *base, int y, int deck,
+                          const struct deck_beat *d, int master)
+{
+    char lab[2] = { (char)('1' + deck), '\0' };
+    int c, cur = d->ok ? d->pos / 1000 : -1;
+    fill_visual(base, MET_X, y, MET_LAB_W, MET_ROW_H, COL_BLACK);
+    draw_text(base, MET_X, y, lab, !d->ok ? COL_DIM : master ? COL_MASTER : COL_TEXT);
+    for (c = 0; c < 4; c++) {
+        int x = MET_BAR_X + c * (MET_CELL + MET_GAP);
+        if (c != cur) {
+            fill_visual(base, x, y, MET_CELL, MET_ROW_H, c == 0 ? COL_CELL1 : COL_CELL);
+        } else {
+            /* The lit beat fills left to right through the beat, so the two
+             * rows' fill edges line up when the decks are in phase. */
+            int f = (d->pos % 1000) * MET_CELL / 1000;
+            fill_visual(base, x, y, f, MET_ROW_H, c == 0 ? COL_FILL1 : COL_FILL);
+            fill_visual(base, x + f, y, MET_CELL - f, MET_ROW_H, c == 0 ? COL_LIT1 : COL_LIT);
+        }
+    }
+}
+
+/* Top: a center-zero gauge, half a beat each side, of where the other deck's
+ * beat sits against the reference deck's. Right of center = ahead.
+ * Bottom: that offset in ms, the tempo difference, and the bar offset when
+ * the beats line up but the downbeats do not. */
+static void draw_drift(unsigned char *base, const struct deck_beat *dk, int ref)
+{
+    int oth = 1 - ref;
+    const struct deck_beat *r = &dk[ref], *o = &dk[oth];
+    int cx = MET_BAR_X + MET_BAR_W / 2;
+    int half = MET_BAR_W / 2;
+    int y0 = MET_ROW0, y1 = MET_ROW1;
+    char lab[2] = { (char)('1' + oth), '\0' };
+    char txt[40], *p;
+    int diff, bars, frac, ms, dbpm, am, col, x;
+
+    fill_visual(base, MET_X, y0, MET_LAB_W, MET_ROW_H, COL_BLACK);
+    fill_visual(base, MET_X, y1, MET_W, MET_ROW_H, COL_BLACK);
+    fill_visual(base, MET_BAR_X, y0, MET_BAR_W, MET_ROW_H, COL_CELL);
+    fill_visual(base, MET_BAR_X + half / 2, y0, 1, MET_ROW_H, COL_DIM);
+    fill_visual(base, cx + half / 2, y0, 1, MET_ROW_H, COL_DIM);
+    if (!r->ok || !o->ok || r->bpm <= 0) {
+        fill_visual(base, cx - 1, y0, 2, MET_ROW_H, COL_DIM);
+        draw_text(base, MET_X, y0, lab, COL_DIM);
+        draw_text(base, MET_BAR_X, y1, "NO GRID", COL_DIM);
+        return;
+    }
+    diff = o->pos - r->pos;            /* milli-beats, wrap to -2000..1999 */
+    diff = ((diff % 4000) + 4000 + 2000) % 4000 - 2000;
+    bars = (diff + (diff >= 0 ? 500 : -500)) / 1000;
+    frac = diff - bars * 1000;         /* -500..500 */
+    ms = (int)((long long)frac * 6000 / r->bpm);
+    dbpm = o->bpm - r->bpm;
+    am = ms < 0 ? -ms : ms;
+    col = am <= LOCK_MS ? COL_LOCK : am <= NEAR_MS ? COL_NEAR : COL_FAR;
+
+    x = frac * half / 500;
+    if (x > 0)
+        fill_visual(base, cx, y0 + 3, x, MET_ROW_H - 6, col);
+    else if (x < 0)
+        fill_visual(base, cx + x, y0 + 3, -x, MET_ROW_H - 6, col);
+    fill_visual(base, cx + x - 2, y0, 4, MET_ROW_H, col);
+    fill_visual(base, cx, y0, 1, MET_ROW_H, COL_TEXT);
+    draw_text(base, MET_X, y0, lab, COL_TEXT);
+
+    p = put_int(txt, ms);
+    strcpy(p, "MS");
+    draw_text(base, MET_BAR_X, y1, txt, col);
+    p = txt;
+    strcpy(p, "BPM ");
+    p += 4;
+    if (dbpm > -LOCK_BPM && dbpm < LOCK_BPM)
+        strcpy(p, "=");
+    else
+        put_bpm_delta(p, dbpm);
+    draw_text(base, MET_BAR_X + 96, y1,
+              txt, (dbpm > -LOCK_BPM && dbpm < LOCK_BPM) ? COL_LOCK : COL_TEXT);
+    if (bars) {
+        p = txt;
+        strcpy(p, "BEAT ");
+        put_int(p + 5, bars);
+        draw_text(base, MET_X + MET_W - text_width(txt), y1, txt, COL_NEAR);
+    }
+}
+
+static int beat_paint_us;   /* slowest beat_paint since the last log */
+
+static void beat_log(const struct deck_beat *dk, int master)
+{
+    static unsigned long long last;
+    unsigned long long now = mono_ms();
+    char buf[200];
+    int fd, n, i;
+    if (now - last < 1000)
+        return;
+    last = now;
+    n = snprintf(buf, sizeof(buf), "master %d paint_us %d\n", master, beat_paint_us);
+    beat_paint_us = 0;
+    for (i = 0; i < 2; i++)
+        n += snprintf(buf + n, sizeof(buf) - n,
+                      "deck %d ok %d t %d beat %d/%d pos %d bpm %d\n",
+                      i + 1, dk[i].ok, dk[i].t, dk[i].idx, dk[i].n,
+                      dk[i].pos, dk[i].bpm);
+    fd = open(BEAT_LOG, O_WRONLY | O_CREAT | O_TRUNC, 0666);
+    if (fd < 0)
+        return;
+    (void)write(fd, buf, (size_t)n);
+    close(fd);
+}
+
+/* Every frame while on: the bars move, and the page about to be shown is
+ * three frames old. rbp's pixels here are black, so the driver's unchanged
+ * tile skip leaves ours alone; turning the meter off is undone by the full
+ * redraw that closing the panel forces. */
+static void beat_paint(unsigned char *base, int page)
+{
+    static int painted[3];
+    struct timespec t0, t1;
+    int us;
+    struct deck_beat dk[2];
+    void *dj = *(void **)DJENGINEIF_GLOBAL;
+    void *pe = *(void **)PLAYENGINE_GLOBAL;
+    int mode = beat_mode(), master, ref;
+
+    if (mode == BEAT_OFF || !dj || !pe) {
+        painted[page] = 0;
+        return;
+    }
+    clock_gettime(CLOCK_MONOTONIC, &t0);
+    deck_beat_read(dj, pe, 0, &dk[0]);
+    deck_beat_read(dj, pe, 1, &dk[1]);
+    master = DJ_SYNC_MASTER(dj);
+    if (master != 0 && master != 1)
+        master = -1;
+    beat_log(dk, master);
+
+    /* The cells cover their rows every frame; the rest only changes with
+     * the mode. DRIFT's text row is cleared in draw_drift. */
+    if (painted[page] != mode) {
+        fill_visual(base, MET_X, MET_Y, MET_W, MET_H, COL_BLACK);
+        painted[page] = mode;
+    }
+    if (mode == BEAT_BARS) {
+        draw_deck_bar(base, MET_ROW0, 0, &dk[0], master == 0);
+        draw_deck_bar(base, MET_ROW1, 1, &dk[1], master == 1);
+    } else {
+        /* Reference: the sync master, else deck 1. */
+        ref = master >= 0 && dk[master].ok ? master : 0;
+        draw_drift(base, dk, ref);
+    }
+    clock_gettime(CLOCK_MONOTONIC, &t1);
+    us = (int)((t1.tv_sec - t0.tv_sec) * 1000000L + (t1.tv_nsec - t0.tv_nsec) / 1000);
+    if (us > beat_paint_us)
+        beat_paint_us = us;
+}
+
+static void set_beat_mode(int m)
+{
+    if (!ov_shm)
+        return;
+    ov_shm->beat_mode = m;
+    __sync_synchronize();
+    olog(m == BEAT_OFF ? "overlay: beat OFF\n" :
+         m == BEAT_BARS ? "overlay: beat BARS\n" : "overlay: beat DRIFT\n");
+}
+
 static int ensure_map(int fb_fd)
 {
     struct {
@@ -1056,6 +1426,7 @@ void overlay_paint(int fb_fd, unsigned yoffset)
     int jog;
     int fps;
     int scr = 0, led = 0, cpu = -1;
+    int beat;
     char label[24];
     char name1[32];
     char name2[32];
@@ -1074,6 +1445,7 @@ void overlay_paint(int fb_fd, unsigned yoffset)
     }
     mode = ov_mode;
     jog = jog_milli();
+    beat = beat_mode();
     /* Only while the panel is open: a closed tab repaints into the live
      * scanout buffer, so it must not change every second. */
     fps = open ? fps_x10() : 0;
@@ -1109,10 +1481,12 @@ void overlay_paint(int fb_fd, unsigned yoffset)
     page = (int)(yoffset / 1280u);
     if (page < 0 || page >= 3)
         page = 0;
+    beat_paint(base, page);
     hash = 2166136261u;
     hash = hash_bytes(hash, &open, sizeof(open));
     hash = hash_bytes(hash, &mode, sizeof(mode));
     hash = hash_bytes(hash, &jog, sizeof(jog));
+    hash = hash_bytes(hash, &beat, sizeof(beat));
     hash = hash_bytes(hash, &fps, sizeof(fps));
     hash = hash_bytes(hash, &scr, sizeof(scr));
     hash = hash_bytes(hash, &led, sizeof(led));
@@ -1163,6 +1537,19 @@ void overlay_paint(int fb_fd, unsigned yoffset)
             fill_visual(base, x, WAVE_Y, WAVE_BTN, ROW_H,
                         ov_wave_cur == wave_col[i] ? COL_ON : COL_BTN);
             draw_text_centered(base, x, WAVE_Y, WAVE_BTN, ROW_H, wave_name[i], COL_TEXT);
+        }
+    }
+
+    draw_label(base, BEAT_Y, "BEAT");
+    {
+        static const int beat_val[3] = {BEAT_OFF, BEAT_BARS, BEAT_DRIFT};
+        static const char *beat_name[3] = {"OFF", "BARS", "DRIFT"};
+        int i;
+        for (i = 0; i < 3; i++) {
+            int x = WAVE_X + i * (WAVE_BTN + WAVE_GAP);
+            fill_visual(base, x, BEAT_Y, WAVE_BTN, ROW_H,
+                        beat == beat_val[i] ? COL_ON : COL_BTN);
+            draw_text_centered(base, x, BEAT_Y, WAVE_BTN, ROW_H, beat_name[i], COL_TEXT);
         }
     }
 
@@ -1257,6 +1644,7 @@ int overlay_touch(int down, int was_down, int lx, int ly)
     int on_tab, on_panel, on_mode, on_jog_dn, on_jog_up;
     int on_usb1, on_usb2, on_blue, on_rgb, on_band, on_quant_on, on_quant_off, on_power;
     int on_tag, on_tags, on_find;
+    int on_beat_off, on_beat_bars, on_beat_drift;
     int on_scr_dn, on_scr_up, on_led_dn, on_led_up;
     int fresh;
     unsigned long long now;
@@ -1282,6 +1670,9 @@ int overlay_touch(int down, int was_down, int lx, int ly)
         on_blue = in_rect(vx, vy, WAVE_X, WAVE_Y, WAVE_BTN, ROW_H);
         on_rgb = in_rect(vx, vy, WAVE_X + (WAVE_BTN + WAVE_GAP), WAVE_Y, WAVE_BTN, ROW_H);
         on_band = in_rect(vx, vy, WAVE_X + 2 * (WAVE_BTN + WAVE_GAP), WAVE_Y, WAVE_BTN, ROW_H);
+        on_beat_off = in_rect(vx, vy, WAVE_X, BEAT_Y, WAVE_BTN, ROW_H);
+        on_beat_bars = in_rect(vx, vy, WAVE_X + (WAVE_BTN + WAVE_GAP), BEAT_Y, WAVE_BTN, ROW_H);
+        on_beat_drift = in_rect(vx, vy, WAVE_X + 2 * (WAVE_BTN + WAVE_GAP), BEAT_Y, WAVE_BTN, ROW_H);
         on_quant_on = in_rect(vx, vy, QUANT_ON_X, QUANT_Y, QUANT_HALF, ROW_H);
         on_quant_off = in_rect(vx, vy, QUANT_OFF_X, QUANT_Y, QUANT_HALF, ROW_H);
         on_tag = in_rect(vx, vy, WAVE_X, TRACK_Y, WAVE_BTN, ROW_H);
@@ -1338,6 +1729,12 @@ int overlay_touch(int down, int was_down, int lx, int ly)
                 request_wave(3);
             else if (on_band)
                 request_wave(4);
+            else if (on_beat_off)
+                set_beat_mode(BEAT_OFF);
+            else if (on_beat_bars)
+                set_beat_mode(BEAT_BARS);
+            else if (on_beat_drift)
+                set_beat_mode(BEAT_DRIFT);
             else if (on_quant_on)
                 request_quant(1);
             else if (on_quant_off)

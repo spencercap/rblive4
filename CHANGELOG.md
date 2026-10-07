@@ -2,6 +2,18 @@
 
 Differences from [erhan-/rblive4](https://github.com/erhan-/rblive4), forked at `6003702`.
 
+## 2026-10-08
+
+### Beat meter
+
+rbp marks the beat only with the small red bar ticks over each waveform. A beat meter now sits in the top bar, right of the MOD tab, with one row per deck. It reads each deck's beat grid straight from the engine. A new MOD row, **BEAT**, picks the view:
+
+* **BARS** (default): 4 beat cells per deck. The current beat lights up and fills as it passes. Matching fill edges mean the decks are in phase.
+* **DRIFT**: a center-zero gauge of the other deck against the sync master, the offset in ms, the BPM difference, and the downbeat offset.
+* **OFF**.
+
+See [docs/08 — Beat meter](docs/08-controls.md#beat-meter).
+
 ## 2026-10-01
 
 ### Display: 60 fps
