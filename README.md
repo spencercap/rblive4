@@ -39,6 +39,8 @@ unchanged.
 | Display | 800×1280 portrait framebuffer, rotated, rekordbox UI full-screen | [docs/06](docs/06-display.md) |
 | Touchscreen | ILI2117 capacitive, identity calibration installed in the chroot | [docs/07](docs/07-touch.md) |
 | Controls | transport, deck, mixer, jog, pads, DJ / Sound Color FX, and the MOD menu | [docs/08](docs/08-controls.md) |
+| Track Preview | touch a browse row's mini waveform to audition it in the headphones, with a playhead | [docs/08](docs/08-controls.md#track-preview) |
+| Touch Cue | touch a playing deck's overview waveform to hear that point in the headphones, and set a hot cue there from a pad | [docs/08](docs/08-controls.md#touch-cue) |
 | Panel LEDs | PLAY / CUE / SYNC / KEY LOCK / VINYL / SLIP and FX LEDs mirror rbp's own LED state (blink included) | [docs/08](docs/08-controls.md) |
 | VU meters | master L/R + channel 1/2 live levels | [docs/08](docs/08-controls.md) |
 | Audio | master (XLR/RCA), headphones + cue, booth and built-in monitors on the JP21 8-channel codec | [docs/09](docs/09-audio.md) |
@@ -54,6 +56,7 @@ unchanged.
   mapped. Beat FX channel, type, TIME (beat/ms/BPM), ON, and the beat-loop
   encoder are mapped.
 * Pad RGB colours and pad-mode LEDs are not driven.
+* Touch Cue audio is rough: the preview player has no VBR seek table for the deck's file. TODO.
 * Autostart is not provided; the launcher is run manually.
 
 ---

@@ -23,13 +23,18 @@ struct rb_overlay_shm {
     /* Beat meter in the top bar, right of MOD. 0 = not set yet = BARS. */
     volatile int beat_mode;
     /* LINK CUE for Track Preview (preview audio to the headphones).
+     * 0 = not set yet = ON, 1 = ON, 2 = OFF. */
+    volatile int link_cue;
+    /* Touch Cue on the deck overview waveforms, applied by knobshim2.
      * 0 = not set yet = ON, 1 = ON, 2 = OFF. Last field: rot16 and knobshim
      * map the older, shorter struct. */
-    volatile int link_cue;
+    volatile int tcue_mode;
 };
 
 #define LINK_ON  1
 #define LINK_OFF 2
+#define TCUE_ON  1
+#define TCUE_OFF 2
 
 #define BEAT_OFF   1
 #define BEAT_BARS  2
@@ -52,6 +57,10 @@ struct rb_overlay_shm {
  * Returns 1 when the sample belongs to the overlay and must not be
  * forwarded. was_down is the previous sample's finger state. */
 int overlay_touch(int down, int was_down, int lx, int ly);
+
+/* Touch Cue on the deck overview waveforms: same sample, called after overlay_touch declined it.
+ * Returns 1 when a Touch Cue took the sample. */
+int overlay_tcue_touch(int down, int lx, int ly);
 
 /* Draw the overlay onto the physical framebuffer that was just rotated.
  * yoffset is the FBIOPAN y offset of that buffer. */

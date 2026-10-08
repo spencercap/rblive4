@@ -83,6 +83,7 @@ struct fb_fix_screeninfo {
 
 static pthread_mutex_t fb_lock = PTHREAD_MUTEX_INITIALIZER;
 
+
 /* ============ real syscalls (no libdl) ============ */
 static int real_ioctl(int fd, unsigned long request, void *arg)
 {
@@ -258,6 +259,12 @@ static void *reader_thread(void *arg)
                 transform(rx, ry, &lx, &ly);
                 if (cur_flag != last_flag || lx != last_x || ly != last_y) {
                     if (overlay_touch(cur_flag, last_flag, lx, ly)) {
+                        last_flag = cur_flag;
+                        last_x = lx;
+                        last_y = ly;
+                        break;
+                    }
+                    if (overlay_tcue_touch(cur_flag, lx, ly)) {
                         last_flag = cur_flag;
                         last_x = lx;
                         last_y = ly;

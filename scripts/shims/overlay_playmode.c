@@ -9,7 +9,8 @@
  * (TAG, TAGS, FIND), SCREEN (− backlight percent +), LEDS (− panel LED
  * percent +, applied by knobshim), EJECT, STATS (read-only: CPU load percent
  * and display frames per second, counted at each FBIOPAN), LINK (ON, OFF:
- * LINK CUE, which lets Track Preview play into the headphones), and POWER.
+ * LINK CUE, which lets Track Preview play into the headphones), TCUE (ON, OFF:
+ * Touch Cue on the deck overview waveforms while a deck plays), and POWER.
  * POWER always stays the last row.
  * The MODE button cycles those four play modes. EJECT asks usb-watch to
  * release the stick; the button then reads PULL until the stick is removed.
@@ -100,10 +101,10 @@
 #define TAB_X ((1280 - TAB_W) / 2)
 #define TAB_Y 8
 
-/* Name on the left, value on the right. Twelve rows under the MOD tab:
+/* Name on the left, value on the right. Thirteen rows under the MOD tab:
  * PAN_H = 2 * PAD + rows * ROW_H + (rows - 1) * ROW_GAP. */
 #define PAN_W 348
-#define PAN_H 540
+#define PAN_H 584
 #define PAN_X ((1280 - PAN_W) / 2)
 #define PAN_Y 48
 
@@ -143,8 +144,9 @@
 #define USB_R_X (VAL_X + USB_HALF + USB_GAP)
 #define STATS_Y ROW_Y(9)
 #define LINK_Y ROW_Y(10)
+#define TCUE_Y ROW_Y(11)
 /* POWER is always the last row; add new rows above it. */
-#define PWR_Y  ROW_Y(11)
+#define PWR_Y  ROW_Y(12)
 
 #define COL_TAB    0xff1c2128u
 #define COL_PANEL  0xff121418u
@@ -174,6 +176,7 @@ static volatile int ov_link_seq;      /* bumped by a tap: apply now */
 static int          ov_link_seen;
 static int          ov_link = 1;      /* 1 ON, 0 OFF, for drawing */
 static unsigned long long ov_link_ms;
+static int          ov_tcue = 1;      /* 1 ON, 0 OFF, for drawing */
 static volatile int ov_track_seq;
 static volatile int ov_track_act;     /* 1 TAG, 2 TAGS, 3 FIND */
 static int          ov_track_seen;
@@ -954,6 +957,15 @@ static void request_link(int on)
     ov_link_seq++;
 }
 
+static void request_tcue(int on)
+{
+    on = on ? 1 : 0;
+    ov_tcue = on;
+    if (ov_shm)
+        ov_shm->tcue_mode = on ? TCUE_ON : TCUE_OFF;
+    __sync_synchronize();
+}
+
 static void request_quant(int on)
 {
     on = on ? 1 : 0;
@@ -1468,6 +1480,257 @@ static int ensure_map(int fb_fd)
     return 1;
 }
 
+
+/* ---- Touch Cue and the preview playhead ------------------------------------------------------------
+ * Touch Cue: while the MOD TCUE row is ON and a deck is playing, a touch on its overview waveform plays that
+ * deck's track from the touched point in the headphones (the preview player, gated by LINK CUE); moving the
+ * finger moves it, lifting stops it, and a pad pressed meanwhile sets that hot cue there.  A paused deck is
+ * left to rbp's Needle Search.  The rectangles are the player's own Needle Search areas.
+ * Each deck's Player keeps a copy of its StTrackInfo at +1988; DjEngineIF::loadPreview takes that type.
+ * The copy's owned heap blocks (+804..+839: beat grid and VBR table with their sizes) were already freed,
+ * so they are cleared; sharing them made two players free the same memory.
+ * Playhead: rbp draws none for either preview, so a lime line is painted after the rotate, per fb page,
+ * with the pixels under it saved and put back (the driver skips tiles that did not change). */
+#define DJ_LOADPREVIEW   ((int (*)(void *, const void *, unsigned))0x0004c2fc)
+#define DJ_SETPREVIEWPOS ((int (*)(void *, unsigned))0x0004c3b4)
+#define DJ_UNLOAD        ((void (*)(void *, int, int, int))0x00044f5c)
+#define DJ_ISLOADED      ((int (*)(void *, int))0x0004518c)
+#define DJ_SETCUETIME    ((int (*)(void *, int, int, const void *))0x00048750)
+#define PE_ISPLAYING     ((int (*)(void *, int))0x0005d880)
+#define PP_TOTALLEN      ((int (*)(void *))0x00074064)
+#define PLAYER_INFO_OFF  1988
+#define PP_FRAME_OFF     1884      /* preview player's 44.1 kHz frame counter */
+#define PREVIEW_CH       2
+#define TC_AREA_Y        718
+#define TC_AREA_H        61
+#define TC_AREA_W        513
+#define TC_MIN_MS        100
+#define TC_MIN_DELTA     0.02f
+#define PV_ROW_X         119       /* browse preview row windows: 200 x 38 at y = 110 + 50 * row */
+#define PV_ROW_W         200
+#define PV_ROW_H         38
+
+extern int rb_preview_row(void) __attribute__((weak));   /* knobshim2: browse row being previewed, or -1 */
+extern void *rb_ui_player(int ch) __attribute__((weak));    /* knobshim2: rbp's ui::Player of a deck (channel 1/2) */
+
+static const int tc_area_x[2] = {106, 744};
+static int tc_deck = -1;           /* deck with a Touch Cue running, else -1 */
+static float tc_last;
+static unsigned long long tc_ms;
+
+static void *engine_vec_item(int off, int idx)
+{
+    char *pe = *(char **)PLAYENGINE_GLOBAL;
+    char *vb;
+    if (!pe)
+        return NULL;
+    vb = *(char **)(pe + off);
+    return vb && *(char **)(pe + off + 4) > vb + 4 * idx ? *(void **)(vb + 4 * idx) : NULL;
+}
+
+/* Preview player position: frames played, and as 0..1 of the track.  0 when it is not known yet. */
+static int preview_pos(int *frame, float *ratio)
+{
+    void *pp = engine_vec_item(24, 0);
+    int cur, tot;
+    if (!pp)
+        return 0;
+    cur = *(int *)((char *)pp + PP_FRAME_OFF);
+    tot = PP_TOTALLEN(pp);
+    if (frame)
+        *frame = cur;
+    if (ratio)
+        *ratio = tot > 0 && cur >= 0 ? (cur >= tot ? 1.0f : (float)cur / (float)tot) : -1.0f;
+    return tot > 0 && cur >= 0;
+}
+
+static unsigned fbits(float f)
+{
+    unsigned b;
+    memcpy(&b, &f, sizeof(b));
+    return b;
+}
+
+static float tc_ratio(int vx)
+{
+    float f = (float)(vx - tc_area_x[tc_deck]) / (float)TC_AREA_W;
+    return f < 0.0f ? 0.0f : f > 1.0f ? 1.0f : f;
+}
+
+/* Called from fbshim-tsc for every changed touch sample; returns 1 to keep the sample from rbp. */
+int overlay_tcue_touch(int down, int lx, int ly)
+{
+    static int prev_down;
+    int fresh = down && !prev_down, vx = 1279 - lx, vy = ly, deck;
+    unsigned long long now;
+    prev_down = down;
+
+    if (tc_deck < 0) {
+        unsigned char info[1680];
+        void *pe, *pl;
+        if (!fresh || (ov_shm && ov_shm->tcue_mode == TCUE_OFF) ||   /* TCUE off: nothing else runs */
+            vy < TC_AREA_Y || vy >= TC_AREA_Y + TC_AREA_H)
+            return 0;
+        deck = vx >= tc_area_x[0] && vx < tc_area_x[0] + TC_AREA_W ? 0 :
+               vx >= tc_area_x[1] && vx < tc_area_x[1] + TC_AREA_W ? 1 : -1;
+        pe = *(void **)PLAYENGINE_GLOBAL;
+        pl = deck >= 0 ? engine_vec_item(12, deck) : NULL;
+        if (!pl || !pe || !PE_ISPLAYING(pe, deck) || (rb_preview_row && rb_preview_row() >= 0))
+            return 0;
+        tc_deck = deck;
+        tc_last = tc_ratio(vx);
+        memcpy(info, (char *)pl + PLAYER_INFO_OFF, sizeof(info));
+        memset(info + 804, 0, 36);
+        if (DJ_LOADPREVIEW(NULL, info, fbits(tc_last)) <= 0) {
+            tc_deck = -1;
+            return 0;
+        }
+        tc_ms = mono_ms();
+        return 1;
+    }
+    if (!down) {
+        DJ_UNLOAD(NULL, PREVIEW_CH, 0, 0);
+        tc_deck = -1;
+        return 1;
+    }
+    now = mono_ms();
+    if (now - tc_ms >= TC_MIN_MS) {
+        float f = tc_ratio(vx);
+        if (f - tc_last >= TC_MIN_DELTA || tc_last - f >= TC_MIN_DELTA) {
+            DJ_SETPREVIEWPOS(NULL, fbits(f));
+            tc_last = f;
+            tc_ms = now;
+        }
+    }
+    return 1;
+}
+
+/* The engine call above records the cue, but the pad LED belongs to rbp's UI, which only lights it when its own
+ * pad handler runs (that flow also pauses the deck while it records the cue).  So the UI half is replayed
+ * here, on the paint thread like the other rbp UI calls: ui::Player::onHotCueEvent's steps after a record. */
+#define UI_UPDATE_LED_STATE ((void (*)(void *, int, int, int))0x002fbc80)   /* (player, pad 1..8, state, interval) */
+#define UI_OWN_COLOR        ((void (*)(void *, int, int))0x002fbdd4)        /* (player, pad 1..8, colour mode) */
+
+static volatile int tcue_led_job;   /* ((deck + 1) << 4) | pad 1..8, 0 = none */
+
+static void tcue_led_apply(void)
+{
+    int job = tcue_led_job, pad = job & 15;
+    unsigned char *pl, *led;
+    if (!job)
+        return;
+    tcue_led_job = 0;
+    pl = rb_ui_player ? rb_ui_player(job >> 4) : NULL;
+    if (!pl || pad > *(int *)(pl + 1204))
+        return;
+    UI_UPDATE_LED_STATE(pl, pad, 2, *(int *)(pl + 1224));
+    UI_OWN_COLOR(pl, pad, (pl[541] >> 6) & 1);
+    led = (*(unsigned char ***)(pl + 1196))[pad - 1];
+    if (led[46]) {
+        memcpy(led + 53, led + 50, 3);
+        led[46] = 0;
+    }
+}
+
+/* knobshim2 calls this for every pad note.  A pad pressed during Touch Cue sets that hot cue (EnCueType 1..8
+ * = A..H) at the previewed time and is not passed to rbp; its release is swallowed with it. */
+int rb_tcue_pad(int ch, int note, int on)
+{
+    static unsigned taken;
+    int deck = ch - 4, pad = note - 15, frame;
+    unsigned bit, was;
+    if ((ch != 4 && ch != 5) || pad < 0 || pad > 7)
+        return 0;
+    bit = 1u << (deck * 8 + pad);
+    if (!on) {
+        was = taken & bit;
+        taken &= ~bit;
+        return was != 0;
+    }
+    if (tc_deck == deck && preview_pos(&frame, NULL)) {
+        unsigned char info[824] = {0};   /* StCueInfo: +792 in-point ms, +804 loop end (0xffffffff = none) */
+        *(unsigned *)(info + 792) = (unsigned)((unsigned long long)frame * 1000ull / 44100ull);
+        *(unsigned *)(info + 804) = 0xffffffffu;
+        DJ_SETCUETIME(NULL, deck, 1 + pad, info);
+        tcue_led_job = ((deck + 1) << 4) | (pad + 1);
+        taken |= bit;
+        return 1;
+    }
+    return 0;
+}
+
+#define PH_HALF  3
+#define PH_SPAN  (2 * PH_HALF + 1)
+#define PH_CAP   3
+#define PH_LIME  0xff00ff00u
+#define PH_EDGE  0xff000000u
+
+static struct { int valid, x, y0, h; unsigned saved[PH_SPAN * TC_AREA_H]; } ph[3];
+
+static unsigned get_visual(unsigned char *base, int vx, int vy)
+{
+    int px = vy, py = 1279 - vx;
+    if (px < 0 || py < 0 || px >= 800 || py >= 1280)
+        return 0;
+    return *(unsigned *)(base + (unsigned)py * fb_pitch + (unsigned)px * 4);
+}
+
+/* The line's colour at column c (0..PH_SPAN-1), row y of h; 0 = untouched. */
+static unsigned ph_color(int c, int y, int h)
+{
+    int d = c - PH_HALF;
+    if (y < PH_CAP || y >= h - PH_CAP)
+        return d == -PH_HALF || d == PH_HALF ? PH_EDGE : PH_LIME;
+    return d == -2 || d == 2 ? PH_EDGE : d >= -1 && d <= 1 ? PH_LIME : 0;
+}
+
+static void playhead_paint(unsigned char *base, int page)
+{
+    float f = -1.0f;
+    int x = 0, y0 = 0, h = 0, row, c, y;
+
+    if (tc_deck >= 0) {
+        preview_pos(NULL, &f);
+        if (f < 0.0f)
+            f = tc_last;
+        x = tc_area_x[tc_deck] + (int)(f * (TC_AREA_W - 1));
+        y0 = TC_AREA_Y;
+        h = TC_AREA_H;
+    } else if (rb_preview_row && (row = rb_preview_row()) >= 0 && row < 12 && DJ_ISLOADED(NULL, PREVIEW_CH)) {
+        preview_pos(NULL, &f);
+        if (f >= 0.0f) {
+            x = PV_ROW_X + (int)(f * (PV_ROW_W - 1));
+            y0 = 110 + 50 * row;
+            h = PV_ROW_H;
+        }
+    }
+    if (!h && !ph[page].valid)
+        return;
+    if (ph[page].valid) {   /* put back what is still ours; the driver rewrote the rest */
+        int x0 = ph[page].x - PH_HALF;
+        for (c = 0; c < PH_SPAN; c++)
+            for (y = 0; y < ph[page].h; y++) {
+                unsigned col = ph_color(c, y, ph[page].h);
+                if (col && get_visual(base, x0 + c, ph[page].y0 + y) == col)
+                    put_visual(base, x0 + c, ph[page].y0 + y, ph[page].saved[y * PH_SPAN + c]);
+            }
+        ph[page].valid = 0;
+    }
+    if (!h)
+        return;
+    for (c = 0; c < PH_SPAN; c++)
+        for (y = 0; y < h; y++) {
+            unsigned col = ph_color(c, y, h);
+            ph[page].saved[y * PH_SPAN + c] = get_visual(base, x - PH_HALF + c, y0 + y);
+            if (col)
+                put_visual(base, x - PH_HALF + c, y0 + y, col);
+        }
+    ph[page].x = x;
+    ph[page].y0 = y0;
+    ph[page].h = h;
+    ph[page].valid = 1;
+}
+
 void overlay_paint(int fb_fd, unsigned yoffset)
 {
     static unsigned last_hash[3];
@@ -1490,7 +1753,9 @@ void overlay_paint(int fb_fd, unsigned yoffset)
     apply_pending();
     apply_wave();
     apply_quant();
+    tcue_led_apply();
     apply_link();
+    ov_tcue = !(ov_shm && ov_shm->tcue_mode == TCUE_OFF);
     apply_track();
     open = ov_is_open();
     if (open) {
@@ -1538,6 +1803,7 @@ void overlay_paint(int fb_fd, unsigned yoffset)
     if (page < 0 || page >= 3)
         page = 0;
     beat_paint(base, page);
+    playhead_paint(base, page);
     hash = 2166136261u;
     hash = hash_bytes(hash, &open, sizeof(open));
     hash = hash_bytes(hash, &mode, sizeof(mode));
@@ -1550,6 +1816,7 @@ void overlay_paint(int fb_fd, unsigned yoffset)
     hash = hash_bytes(hash, &ov_wave_cur, sizeof(ov_wave_cur));
     hash = hash_bytes(hash, ov_quant, sizeof(ov_quant));
     hash = hash_bytes(hash, &ov_link, sizeof(ov_link));
+    hash = hash_bytes(hash, &ov_tcue, sizeof(ov_tcue));
     hash = hash_bytes(hash, &eject_arm, sizeof(eject_arm));
     hash = hash_bytes(hash, &pull1, sizeof(pull1));
     hash = hash_bytes(hash, &pull2, sizeof(pull2));
@@ -1635,6 +1902,12 @@ void overlay_paint(int fb_fd, unsigned yoffset)
     fill_visual(base, QUANT_OFF_X, LINK_Y, QUANT_HALF, ROW_H, !ov_link ? COL_ON : COL_BTN);
     draw_text_centered(base, QUANT_OFF_X, LINK_Y, QUANT_HALF, ROW_H, "OFF", COL_TEXT);
 
+    draw_label(base, TCUE_Y, "TCUE");
+    fill_visual(base, QUANT_ON_X, TCUE_Y, QUANT_HALF, ROW_H, ov_tcue ? COL_ON : COL_BTN);
+    draw_text_centered(base, QUANT_ON_X, TCUE_Y, QUANT_HALF, ROW_H, "ON", COL_TEXT);
+    fill_visual(base, QUANT_OFF_X, TCUE_Y, QUANT_HALF, ROW_H, !ov_tcue ? COL_ON : COL_BTN);
+    draw_text_centered(base, QUANT_OFF_X, TCUE_Y, QUANT_HALF, ROW_H, "OFF", COL_TEXT);
+
     {
         int pw = PAN_W - 12;
         int th = 7 * SCALE;
@@ -1705,7 +1978,7 @@ int overlay_touch(int down, int was_down, int lx, int ly)
     int vy = ly;
     int on_tab, on_panel, on_mode, on_jog_dn, on_jog_up;
     int on_usb1, on_usb2, on_blue, on_rgb, on_band, on_quant_on, on_quant_off, on_power;
-    int on_tag, on_tags, on_find, on_link_on, on_link_off;
+    int on_tag, on_tags, on_find, on_link_on, on_link_off, on_tcue_on, on_tcue_off;
     int on_beat_off, on_beat_bars, on_beat_drift;
     int on_scr_dn, on_scr_up, on_led_dn, on_led_up;
     int fresh;
@@ -1739,6 +2012,8 @@ int overlay_touch(int down, int was_down, int lx, int ly)
         on_quant_off = in_rect(vx, vy, QUANT_OFF_X, QUANT_Y, QUANT_HALF, ROW_H);
         on_link_on = in_rect(vx, vy, QUANT_ON_X, LINK_Y, QUANT_HALF, ROW_H);
         on_link_off = in_rect(vx, vy, QUANT_OFF_X, LINK_Y, QUANT_HALF, ROW_H);
+        on_tcue_on = in_rect(vx, vy, QUANT_ON_X, TCUE_Y, QUANT_HALF, ROW_H);
+        on_tcue_off = in_rect(vx, vy, QUANT_OFF_X, TCUE_Y, QUANT_HALF, ROW_H);
         on_tag = in_rect(vx, vy, WAVE_X, TRACK_Y, WAVE_BTN, ROW_H);
         on_tags = in_rect(vx, vy, WAVE_X + (WAVE_BTN + WAVE_GAP), TRACK_Y, WAVE_BTN, ROW_H);
         on_find = in_rect(vx, vy, WAVE_X + 2 * (WAVE_BTN + WAVE_GAP), TRACK_Y, WAVE_BTN, ROW_H);
@@ -1807,6 +2082,10 @@ int overlay_touch(int down, int was_down, int lx, int ly)
                 request_link(1);
             else if (on_link_off)
                 request_link(0);
+            else if (on_tcue_on)
+                request_tcue(1);
+            else if (on_tcue_off)
+                request_tcue(0);
             else if (on_tag)
                 request_track(1);
             else if (on_tags) {
