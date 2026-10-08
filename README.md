@@ -55,6 +55,7 @@ unchanged.
   encoder are mapped.
 * Pad RGB colours and pad-mode LEDs are not driven.
 * Autostart is not provided; the launcher is run manually.
+* **TODO:** Track Preview has no playhead. Touching a track's mini waveform in the browse list plays it, but nothing moves along the waveform, because rbp reports only load and unload to the list, not a position. The playhead is a new feature to add, not a bug: it needs its own drawing, for example in the overlay, driven by the preview position. See [docs/08](docs/08-controls.md#track-preview).
 
 ---
 

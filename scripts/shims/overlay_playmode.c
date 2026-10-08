@@ -8,7 +8,8 @@
  * meter right of the tab, see beat_paint), QUANT (ON, OFF), TRACK
  * (TAG, TAGS, FIND), SCREEN (− backlight percent +), LEDS (− panel LED
  * percent +, applied by knobshim), EJECT, STATS (read-only: CPU load percent
- * and display frames per second, counted at each FBIOPAN), and POWER.
+ * and display frames per second, counted at each FBIOPAN), LINK (ON, OFF:
+ * LINK CUE, which lets Track Preview play into the headphones), and POWER.
  * POWER always stays the last row.
  * The MODE button cycles those four play modes. EJECT asks usb-watch to
  * release the stick; the button then reads PULL until the stick is removed.
@@ -60,6 +61,13 @@
  * This is the QUANT button, not the quantize-beat-value setting. */
 #define UI_SET_QUANTIZE ((void (*)(int, int))0x000fe184)
 #define UI_GET_QUANTIZE ((int (*)(int))0x000fd36c)
+/* MixerEngine::setPreviewChHeadphoneCue(this, bool) / getPreviewChHeadphoneCue.
+ * The singleton pointer lives at 0x011493c0. This is the RX3 LINK CUE button
+ * (key 0x4408), which feeds Track Preview into the headphone bus. */
+#define ME_SINGLETON        0x011493c0UL
+#define ME_SET_PREVIEW_CUE  ((void (*)(void *, int))0x0005762c)
+#define ME_GET_PREVIEW_CUE  ((int (*)(void *))0x0005764c)
+#define LINK_RECHECK_MS     1000
 /* KeyManager::sendKey. Same path knobshim uses for the hardware buttons. */
 #define UI_OBJ_MGR_GLOBAL 0x2685f2cUL
 #define KEY_MANAGER_OFF   100
@@ -92,10 +100,10 @@
 #define TAB_X ((1280 - TAB_W) / 2)
 #define TAB_Y 8
 
-/* Name on the left, value on the right. Eleven rows under the MOD tab:
+/* Name on the left, value on the right. Twelve rows under the MOD tab:
  * PAN_H = 2 * PAD + rows * ROW_H + (rows - 1) * ROW_GAP. */
 #define PAN_W 348
-#define PAN_H 496
+#define PAN_H 540
 #define PAN_X ((1280 - PAN_W) / 2)
 #define PAN_Y 48
 
@@ -134,8 +142,9 @@
 #define USB_L_X VAL_X
 #define USB_R_X (VAL_X + USB_HALF + USB_GAP)
 #define STATS_Y ROW_Y(9)
+#define LINK_Y ROW_Y(10)
 /* POWER is always the last row; add new rows above it. */
-#define PWR_Y  ROW_Y(10)
+#define PWR_Y  ROW_Y(11)
 
 #define COL_TAB    0xff1c2128u
 #define COL_PANEL  0xff121418u
@@ -161,6 +170,10 @@ static volatile int ov_quant_on;
 static int          ov_quant_seen;
 static int          ov_quant_known;
 static int          ov_quant[2];
+static volatile int ov_link_seq;      /* bumped by a tap: apply now */
+static int          ov_link_seen;
+static int          ov_link = 1;      /* 1 ON, 0 OFF, for drawing */
+static unsigned long long ov_link_ms;
 static volatile int ov_track_seq;
 static volatile int ov_track_act;     /* 1 TAG, 2 TAGS, 3 FIND */
 static int          ov_track_seen;
@@ -899,6 +912,48 @@ static void apply_quant(void)
     olog(on ? "overlay: quantize ON\n" : "overlay: quantize OFF\n");
 }
 
+static int link_want(void)
+{
+    return !(ov_shm && ov_shm->link_cue == LINK_OFF);
+}
+
+/* Keep rbp's preview headphone cue at the wanted state. rbp resets it to off
+ * at startup and the SC Live 4 has no LINK CUE button to set it, so check
+ * about once a second, and at once after a tap. Runs on rbp's GUI thread. */
+static void apply_link(void)
+{
+    unsigned long long now = mono_ms();
+    int seq = ov_link_seq;
+    int want, cur;
+    void *me;
+
+    if (seq == ov_link_seen && ov_link_ms && now - ov_link_ms < LINK_RECHECK_MS)
+        return;
+    ov_link_ms = now;
+    __sync_synchronize();
+    ov_link_seen = seq;
+    want = link_want();
+    ov_link = want;
+    me = *(void **)ME_SINGLETON;
+    if (!me)
+        return;
+    cur = ME_GET_PREVIEW_CUE(me) ? 1 : 0;
+    if (cur == want)
+        return;
+    ME_SET_PREVIEW_CUE(me, want);
+    olog(want ? "overlay: link cue ON\n" : "overlay: link cue OFF\n");
+}
+
+static void request_link(int on)
+{
+    on = on ? 1 : 0;
+    ov_link = on;
+    if (ov_shm)
+        ov_shm->link_cue = on ? LINK_ON : LINK_OFF;
+    __sync_synchronize();
+    ov_link_seq++;
+}
+
 static void request_quant(int on)
 {
     on = on ? 1 : 0;
@@ -1435,6 +1490,7 @@ void overlay_paint(int fb_fd, unsigned yoffset)
     apply_pending();
     apply_wave();
     apply_quant();
+    apply_link();
     apply_track();
     open = ov_is_open();
     if (open) {
@@ -1493,6 +1549,7 @@ void overlay_paint(int fb_fd, unsigned yoffset)
     hash = hash_bytes(hash, &cpu, sizeof(cpu));
     hash = hash_bytes(hash, &ov_wave_cur, sizeof(ov_wave_cur));
     hash = hash_bytes(hash, ov_quant, sizeof(ov_quant));
+    hash = hash_bytes(hash, &ov_link, sizeof(ov_link));
     hash = hash_bytes(hash, &eject_arm, sizeof(eject_arm));
     hash = hash_bytes(hash, &pull1, sizeof(pull1));
     hash = hash_bytes(hash, &pull2, sizeof(pull2));
@@ -1572,6 +1629,11 @@ void overlay_paint(int fb_fd, unsigned yoffset)
                 (!ov_quant[0] && !ov_quant[1]) ? COL_ON : COL_BTN);
     draw_text_centered(base, QUANT_OFF_X, QUANT_Y, QUANT_HALF, ROW_H, "OFF", COL_TEXT);
 
+    draw_label(base, LINK_Y, "LINK");
+    fill_visual(base, QUANT_ON_X, LINK_Y, QUANT_HALF, ROW_H, ov_link ? COL_ON : COL_BTN);
+    draw_text_centered(base, QUANT_ON_X, LINK_Y, QUANT_HALF, ROW_H, "ON", COL_TEXT);
+    fill_visual(base, QUANT_OFF_X, LINK_Y, QUANT_HALF, ROW_H, !ov_link ? COL_ON : COL_BTN);
+    draw_text_centered(base, QUANT_OFF_X, LINK_Y, QUANT_HALF, ROW_H, "OFF", COL_TEXT);
 
     {
         int pw = PAN_W - 12;
@@ -1643,7 +1705,7 @@ int overlay_touch(int down, int was_down, int lx, int ly)
     int vy = ly;
     int on_tab, on_panel, on_mode, on_jog_dn, on_jog_up;
     int on_usb1, on_usb2, on_blue, on_rgb, on_band, on_quant_on, on_quant_off, on_power;
-    int on_tag, on_tags, on_find;
+    int on_tag, on_tags, on_find, on_link_on, on_link_off;
     int on_beat_off, on_beat_bars, on_beat_drift;
     int on_scr_dn, on_scr_up, on_led_dn, on_led_up;
     int fresh;
@@ -1675,6 +1737,8 @@ int overlay_touch(int down, int was_down, int lx, int ly)
         on_beat_drift = in_rect(vx, vy, WAVE_X + 2 * (WAVE_BTN + WAVE_GAP), BEAT_Y, WAVE_BTN, ROW_H);
         on_quant_on = in_rect(vx, vy, QUANT_ON_X, QUANT_Y, QUANT_HALF, ROW_H);
         on_quant_off = in_rect(vx, vy, QUANT_OFF_X, QUANT_Y, QUANT_HALF, ROW_H);
+        on_link_on = in_rect(vx, vy, QUANT_ON_X, LINK_Y, QUANT_HALF, ROW_H);
+        on_link_off = in_rect(vx, vy, QUANT_OFF_X, LINK_Y, QUANT_HALF, ROW_H);
         on_tag = in_rect(vx, vy, WAVE_X, TRACK_Y, WAVE_BTN, ROW_H);
         on_tags = in_rect(vx, vy, WAVE_X + (WAVE_BTN + WAVE_GAP), TRACK_Y, WAVE_BTN, ROW_H);
         on_find = in_rect(vx, vy, WAVE_X + 2 * (WAVE_BTN + WAVE_GAP), TRACK_Y, WAVE_BTN, ROW_H);
@@ -1739,6 +1803,10 @@ int overlay_touch(int down, int was_down, int lx, int ly)
                 request_quant(1);
             else if (on_quant_off)
                 request_quant(0);
+            else if (on_link_on)
+                request_link(1);
+            else if (on_link_off)
+                request_link(0);
             else if (on_tag)
                 request_track(1);
             else if (on_tags) {

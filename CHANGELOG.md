@@ -4,6 +4,16 @@ Differences from [erhan-/rblive4](https://github.com/erhan-/rblive4), forked at 
 
 ## 2026-10-08
 
+### LINK CUE row and Track Preview
+
+Track Preview (touch a track's mini waveform in the browse list to hear it from that point) is already in rbp, but its audio stays muted until the RX3's LINK CUE button turns it on, and the SC Live 4 has no such button. A new MOD row, **LINK**, sets it through `MixerEngine::setPreviewChHeadphoneCue`. It defaults to ON and is re-applied about once a second, because rbp resets it at startup. Preview plays in the headphones only. Touch Cue is a CDJ-3000X feature and does not exist in this firmware.
+
+Track Preview itself was rejected by rbp: the `0x3664b4` startup patch makes `isOnMessageThread()` always true, and `ui::PlayerPreview::loadPreview`, `setPreviewPosition` and `unloadPreview` return early when it is. `knobshim2` now reports false for the duration of those calls. rbp shows no moving playhead during preview.
+
+### Touch screen found by name
+
+The touchscreen was read from `/dev/input/event0`. On some boots Linux gives `event0` to `gpio-keys` and the ILI2117 becomes `event1`, which left touch dead while the knobs worked. `fbshim-tsc` now finds the device by its name.
+
 ### Beat meter
 
 rbp marks the beat only with the small red bar ticks over each waveform. A beat meter now sits in the top bar, right of the MOD tab, with one row per deck. It reads each deck's beat grid straight from the engine. A new MOD row, **BEAT**, picks the view:

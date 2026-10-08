@@ -2701,6 +2701,315 @@ static void install_meter_hook(void)
      klog("knobshim2: meter hook installed (tramp=%p)\n", (void *)g_tramp);
 }
 
+
+/* ---- Track Preview fix and trace -----------------------------------------
+ * The isOnMessageThread/ui load/position/unload hooks are the fix and are
+ * always on.  With PREVIEW_TRACE=1 it also logs rbp's UiBrowsePreviewLoad_Start / _Seek calls so a silent preview can
+ * be split into "touch never arrives" and "arrives but no sound".  Both
+ * prologues start with two position-independent instructions, so they can be
+ * copied to a trampoline.  Start(row, ratio float bits); Seek(ratio bits). */
+#define ADDR_PREVIEW_START 0x001219dcUL
+#define ADDR_PREVIEW_SEEK  0x00121a20UL
+static int (*g_orig_pv_start)(int, unsigned);
+static int (*g_orig_pv_seek)(unsigned);
+static volatile int g_pv_logs;
+static int g_pv_trace;   /* PREVIEW_TRACE=1: log preview calls to /tmp/knobshim.log */
+#define ADDR_PREVIEW_CHECK 0x00363680UL   /* TouchAreaProc_ToouchPreview::checkTouchOn(x,y) */
+static int (*g_orig_pv_check)(void *, unsigned, unsigned);
+static volatile int g_pv_chk_logs;
+
+#define ADDR_DJ_LOADPREVIEW  0x0004c2fcUL  /* DjEngineIF::loadPreview(this, StTrackInfo*, float) */
+#define ADDR_DJ_SETPOS       0x0004c3b4UL  /* DjEngineIF::setPreviewPosition(this, float) */
+#define ADDR_PP_EVENTLOAD    0x000748e0UL  /* playengine::PlayerPreview::eventLoadFile(this, bool) */
+static int (*g_orig_dj_load)(void *, void *, unsigned);
+static int (*g_orig_dj_pos)(void *, unsigned);
+static int (*g_orig_pp_evload)(void *, int);
+static volatile int g_pv_eng_logs;
+
+static int dj_load_hook(void *self, void *info, unsigned bits)
+{
+     float f;
+     int r;
+     memcpy(&f, &bits, sizeof(f));
+     klog("knobshim2: ENGINE loadPreview this=%p info=%p pos=%.3f\n", self, info, f);
+     r = g_orig_dj_load ? g_orig_dj_load(self, info, bits) : 0;
+     klog("knobshim2: ENGINE loadPreview ret=%d\n", r);
+     return r;
+}
+
+static int dj_pos_hook(void *self, unsigned bits)
+{
+     float f;
+     memcpy(&f, &bits, sizeof(f));
+     if (g_pv_eng_logs++ < 30)
+          klog("knobshim2: ENGINE setPreviewPosition %.3f\n", f);
+     return g_orig_dj_pos ? g_orig_dj_pos(self, bits) : 0;
+}
+
+static int pp_evload_hook(void *self, int ok)
+{
+     klog("knobshim2: ENGINE PlayerPreview::eventLoadFile ok=%d\n", ok);
+     return g_orig_pp_evload ? g_orig_pp_evload(self, ok) : 0;
+}
+
+#define ADDR_PV_LOADPROC 0x001395ecUL  /* BrowsePreviewLoadStartProc(idx, float ratio in s0) */
+static int (*g_orig_pv_proc)(int);
+
+static int pv_proc_hook(int idx)
+{
+     struct timespec a, b;
+     int r;
+     clock_gettime(CLOCK_MONOTONIC, &a);
+     klog("knobshim2: LOADPROC enter idx=%d\n", idx);
+     r = g_orig_pv_proc ? g_orig_pv_proc(idx) : 0;
+     clock_gettime(CLOCK_MONOTONIC, &b);
+     klog("knobshim2: LOADPROC leave ret=%d after %ld ms\n", r,
+          (long)((b.tv_sec - a.tv_sec) * 1000 + (b.tv_nsec - a.tv_nsec) / 1000000));
+     return r;
+}
+
+#define ADDR_TRCV_MBX 0x0017e870UL   /* trcv_mbx(mbx, void **msg, tmo): the preview DB reply uses tmo=5000 */
+static int (*g_orig_trcv)(int, void **, int);
+
+static int trcv_hook(int mbx, void **pmsg, int tmo)
+{
+     int r = g_orig_trcv ? g_orig_trcv(mbx, pmsg, tmo) : 0;
+     if (tmo == 5000) {
+          unsigned char *m = (pmsg && r == 0) ? (unsigned char *)*pmsg : NULL;
+          if (m)
+               klog("knobshim2: PVDB reply mbx=%d r=%d cmd=%d vbrsize=0x%08x vbrptr=0x%08x\n",
+                    mbx, r, *(int *)(m + 8),
+                    (unsigned)(*(unsigned short *)(m + 112) | ((unsigned)*(unsigned short *)(m + 114) << 16)),
+                    (unsigned)(*(unsigned short *)(m + 116) | ((unsigned)*(unsigned short *)(m + 118) << 16)));
+          else
+               klog("knobshim2: PVDB reply mbx=%d r=%d (no message)\n", mbx, r);
+     }
+     return r;
+}
+
+#define ADDR_UI_LOADPREVIEW 0x0030a47cUL  /* ui::PlayerPreview::loadPreview(this, DBIF_MusicInfo&, float) */
+#define ADDR_ERRCHK_MID     0x001869b8UL  /* CmnFunc_ErrChekMusicID(id*) */
+#define ADDR_VFS_CONVERT    0x00197a40UL  /* vfs_convert_path(out, in16, outsz) */
+static int (*g_orig_ui_load)(void *, void *, unsigned);
+static int (*g_orig_errchk)(void *);
+static int (*g_orig_vfs)(char *, unsigned short *, int);
+
+/* ui::PlayerPreview::loadPreview refuses to run when isOnMessageThread() is
+ * true: it must be called from a task thread and posts the load to the message
+ * thread.  The startup-deadlock patch at 0x3664b4 makes isOnMessageThread()
+ * always return 1, so every preview load was rejected.  Report "not on the
+ * message thread" only while the preview load call itself is running. */
+#define ADDR_ISONMSGTHREAD 0x003664a0UL  /* PanelComPeerLinux::isOnMessageThread() const */
+static int (*g_orig_isonmt)(void *);
+static __thread int t_in_preview_load;
+
+static int isonmt_hook(void *self)
+{
+     if (t_in_preview_load)
+          return 0;
+     return g_orig_isonmt ? g_orig_isonmt(self) : 1;
+}
+
+#define ADDR_UI_SETPOS   0x0030a560UL  /* ui::PlayerPreview::setPreviewPosition(this, float) */
+#define ADDR_UI_UNLOAD   0x0030a618UL  /* ui::PlayerPreview::unloadPreview(this) */
+static int (*g_orig_ui_pos)(void *, unsigned);
+static int (*g_orig_ui_unload)(void *);
+
+/* Same message-thread check as loadPreview (see above). */
+static int ui_pos_hook(void *self, unsigned bits)
+{
+     int r;
+     t_in_preview_load = 1;
+     r = g_orig_ui_pos ? g_orig_ui_pos(self, bits) : 0;
+     t_in_preview_load = 0;
+     return r;
+}
+
+static int ui_unload_hook(void *self)
+{
+     int r;
+     t_in_preview_load = 1;
+     r = g_orig_ui_unload ? g_orig_ui_unload(self) : 0;
+     t_in_preview_load = 0;
+     if (g_pv_trace)
+          klog("knobshim2: UI PlayerPreview::unloadPreview ret=%d\n", r);
+     return r;
+}
+
+#define ADDR_SET_PLAYSTATE  0x0027d780UL  /* setPreviewPlayState(state) */
+#define ADDR_UI_NOTIFYLOAD  0x0030a6a8UL  /* ui::PlayerPreview::notifyLoadResult(this, int) */
+static void (*g_orig_playstate)(int);
+static void (*g_orig_notifyload)(void *, int);
+static volatile int g_ps_logs;
+
+static void playstate_hook(int st)
+{
+     if (g_ps_logs++ < 40)
+          klog("knobshim2: setPreviewPlayState(%d)\n", st);
+     if (g_orig_playstate)
+          g_orig_playstate(st);
+}
+
+static void notifyload_hook(void *self, int res)
+{
+     klog("knobshim2: UI PlayerPreview::notifyLoadResult res=%d flag48=%d\n", res,
+          self ? *(unsigned char *)((char *)self + 48) : -1);
+     if (g_orig_notifyload)
+          g_orig_notifyload(self, res);
+}
+
+static int ui_load_hook(void *self, void *info, unsigned bits)
+{
+     void *h34 = self ? *(void **)((char *)self + 52) : NULL;
+     void *h4 = self ? *(void **)((char *)self + 4) : NULL;
+     int r;
+     t_in_preview_load = 1;
+     r = g_orig_ui_load ? g_orig_ui_load(self, info, bits) : 0;
+     t_in_preview_load = 0;
+     if (g_pv_trace)
+          klog("knobshim2: UI PlayerPreview::loadPreview this=%p handler(+52)=%p obj(+4)=%p ret=%d\n",
+               self, h34, h4, r);
+     return r;
+}
+
+static int errchk_hook(void *id)
+{
+     int r = g_orig_errchk ? g_orig_errchk(id) : 0;
+     klog("knobshim2: ErrChekMusicID ret=%d\n", r);
+     return r;
+}
+
+static int vfs_hook(char *out, unsigned short *in, int sz)
+{
+     char a[96];
+     int i, r;
+     for (i = 0; in && i < 95 && in[i]; i++)
+          a[i] = (in[i] < 128) ? (char)in[i] : '?';
+     a[i] = 0;
+     r = g_orig_vfs ? g_orig_vfs(out, in, sz) : -1;
+     klog("knobshim2: vfs_convert_path in=\"%s\" ret=%d out=\"%.80s\"\n", a, r, r == 0 ? out : "");
+     return r;
+}
+
+static int pv_check_hook(void *self, unsigned x, unsigned y)
+{
+     int r = g_orig_pv_check ? g_orig_pv_check(self, x, y) : 0;
+     if (g_pv_chk_logs++ < 60)
+          klog("knobshim2: preview checkTouchOn x=%u y=%u rect=%u,%u,%u,%u ret=%d\n",
+               x, y, ((unsigned *)self)[2], ((unsigned *)self)[3],
+               ((unsigned *)self)[4], ((unsigned *)self)[5], r);
+     return r;
+}
+
+static int pv_start_hook(int row, unsigned bits)
+{
+     int r = g_orig_pv_start ? g_orig_pv_start(row, bits) : 0;
+     float f;
+     void *me = *(void **)ME_SINGLETON;
+     memcpy(&f, &bits, sizeof(f));
+     klog("knobshim2: preview START row=%d ratio=%.3f ret=%d linkcue=%d\n",
+          row, f, r, me ? ((int (*)(void *))0x0005764cUL)(me) : -1);
+     return r;
+}
+
+static int pv_seek_hook(unsigned bits)
+{
+     int r = g_orig_pv_seek ? g_orig_pv_seek(bits) : 0;
+     float f;
+     memcpy(&f, &bits, sizeof(f));
+     if (g_pv_logs++ < 40)
+          klog("knobshim2: preview SEEK ratio=%.3f ret=%d\n", f, r);
+     return r;
+}
+
+static void *hook_function(unsigned long addr, void *hook, const char *name)
+{
+     unsigned char *p = (unsigned char *)addr;
+     unsigned char *t;
+     unsigned long pg = addr & ~(unsigned long)4095;
+
+     t = mmap(NULL, 4096, PROT_READ | PROT_WRITE | PROT_EXEC,
+              MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+     if (t == MAP_FAILED) {
+          klog("knobshim2: %s hook: mmap failed\n", name);
+          return NULL;
+     }
+     memcpy(t, p, 8);
+     *(uint32_t *)(t + 8) = 0xE51FF004u;
+     *(uint32_t *)(t + 12) = (uint32_t)(p + 8);
+     __builtin___clear_cache((char *)t, (char *)t + 16);
+     if (mprotect((void *)pg, 4096, PROT_READ | PROT_WRITE | PROT_EXEC) != 0) {
+          klog("knobshim2: %s hook: mprotect failed\n", name);
+          return NULL;
+     }
+     *(uint32_t *)(p + 0) = 0xE51FF004u;
+     *(uint32_t *)(p + 4) = (uint32_t)hook;
+     mprotect((void *)pg, 4096, PROT_READ | PROT_EXEC);
+     __builtin___clear_cache((char *)p, (char *)p + 8);
+     klog("knobshim2: %s hook installed\n", name);
+     return t;
+}
+
+static void install_preview_trace(void)
+{
+     if (!is_rbp_process())
+          return;
+     g_pv_trace = getenv("PREVIEW_TRACE") != NULL;
+
+     /* Track Preview fix: these calls must run as "not on the message thread". */
+     if (*(volatile uint32_t *)ADDR_ISONMSGTHREAD == 0xe92d4010u &&
+         *(volatile uint32_t *)(ADDR_ISONMSGTHREAD + 4) == 0xe1a04000u)
+          g_orig_isonmt = hook_function(ADDR_ISONMSGTHREAD, (void *)isonmt_hook, "isOnMessageThread");
+     if (*(volatile uint32_t *)ADDR_UI_LOADPREVIEW == 0xe92d41f0u &&
+         *(volatile uint32_t *)(ADDR_UI_LOADPREVIEW + 4) == 0xe1a05000u)
+          g_orig_ui_load = hook_function(ADDR_UI_LOADPREVIEW, (void *)ui_load_hook, "ui loadPreview");
+     if (*(volatile uint32_t *)ADDR_UI_SETPOS == 0xe92d4070u &&
+         *(volatile uint32_t *)(ADDR_UI_SETPOS + 4) == 0xe1a04000u)
+          g_orig_ui_pos = hook_function(ADDR_UI_SETPOS, (void *)ui_pos_hook, "ui setPreviewPosition");
+     if (*(volatile uint32_t *)ADDR_UI_UNLOAD == 0xe92d4038u &&
+         *(volatile uint32_t *)(ADDR_UI_UNLOAD + 4) == 0xe1a05000u)
+          g_orig_ui_unload = hook_function(ADDR_UI_UNLOAD, (void *)ui_unload_hook, "ui unloadPreview");
+
+     if (!g_pv_trace)
+          return;
+     /* Diagnostics only. */
+     if (*(volatile uint32_t *)ADDR_PREVIEW_START == 0xe92d4008u &&
+         *(volatile uint32_t *)ADDR_PREVIEW_SEEK == 0xe1a01000u) {
+          g_orig_pv_start = hook_function(ADDR_PREVIEW_START, (void *)pv_start_hook, "preview start");
+          g_orig_pv_seek = hook_function(ADDR_PREVIEW_SEEK, (void *)pv_seek_hook, "preview seek");
+     }
+     if (*(volatile uint32_t *)ADDR_DJ_LOADPREVIEW == 0xe92d41f0u &&
+         *(volatile uint32_t *)(ADDR_DJ_LOADPREVIEW + 4) == 0xe1a05001u)
+          g_orig_dj_load = hook_function(ADDR_DJ_LOADPREVIEW, (void *)dj_load_hook, "engine loadPreview");
+     if (*(volatile uint32_t *)ADDR_DJ_SETPOS == 0xe92d40f8u &&
+         *(volatile uint32_t *)(ADDR_DJ_SETPOS + 4) == 0xe1a05001u)
+          g_orig_dj_pos = hook_function(ADDR_DJ_SETPOS, (void *)dj_pos_hook, "engine setPreviewPosition");
+     if (*(volatile uint32_t *)ADDR_PP_EVENTLOAD == 0xe3510000u &&
+         *(volatile uint32_t *)(ADDR_PP_EVENTLOAD + 4) == 0xe3a03001u)
+          g_orig_pp_evload = hook_function(ADDR_PP_EVENTLOAD, (void *)pp_evload_hook, "PlayerPreview eventLoadFile");
+     if (*(volatile uint32_t *)ADDR_PV_LOADPROC == 0xe92d4ff0u &&
+         *(volatile uint32_t *)(ADDR_PV_LOADPROC + 4) == 0xed2d8b02u)
+          g_orig_pv_proc = hook_function(ADDR_PV_LOADPROC, (void *)pv_proc_hook, "preview loadproc");
+     if (*(volatile uint32_t *)ADDR_TRCV_MBX == 0xe2403001u &&
+         *(volatile uint32_t *)(ADDR_TRCV_MBX + 4) == 0xe353002fu)
+          g_orig_trcv = hook_function(ADDR_TRCV_MBX, (void *)trcv_hook, "trcv_mbx");
+     if (*(volatile uint32_t *)ADDR_ERRCHK_MID == 0xe5903004u &&
+         *(volatile uint32_t *)(ADDR_ERRCHK_MID + 4) == 0xe3530000u)
+          g_orig_errchk = hook_function(ADDR_ERRCHK_MID, (void *)errchk_hook, "ErrChekMusicID");
+     if (*(volatile uint32_t *)ADDR_VFS_CONVERT == 0xe1d130b0u &&
+         *(volatile uint32_t *)(ADDR_VFS_CONVERT + 4) == 0xe92d4070u)
+          g_orig_vfs = hook_function(ADDR_VFS_CONVERT, (void *)vfs_hook, "vfs_convert_path");
+     if (*(volatile uint32_t *)ADDR_SET_PLAYSTATE == 0xe309308cu &&
+         *(volatile uint32_t *)(ADDR_SET_PLAYSTATE + 4) == 0xe3403326u)
+          g_orig_playstate = hook_function(ADDR_SET_PLAYSTATE, (void *)playstate_hook, "setPreviewPlayState");
+     if (*(volatile uint32_t *)ADDR_UI_NOTIFYLOAD == 0xe92d4070u &&
+         *(volatile uint32_t *)(ADDR_UI_NOTIFYLOAD + 4) == 0xe1a06000u)
+          g_orig_notifyload = hook_function(ADDR_UI_NOTIFYLOAD, (void *)notifyload_hook, "notifyLoadResult");
+     if (*(volatile uint32_t *)ADDR_PREVIEW_CHECK == 0xe92d40f8u &&
+         *(volatile uint32_t *)(ADDR_PREVIEW_CHECK + 4) == 0xe1a03000u)
+          g_orig_pv_check = hook_function(ADDR_PREVIEW_CHECK, (void *)pv_check_hook, "preview check");
+}
+
 unsigned int getled_hook(void *self, unsigned char level)
 {
      void *lr = __builtin_return_address(0);
@@ -2818,6 +3127,7 @@ static void *vu_thread(void *arg)
      if (led_fd < 0)
           return NULL;
      install_meter_hook();
+     install_preview_trace();
      /* Ask for the physical control positions only once rbp can accept them:
       * if the reply lands before rbp's mixer exists, the values are dropped and
       * rbp initialises the faders/EQs to their defaults (the fader then reads

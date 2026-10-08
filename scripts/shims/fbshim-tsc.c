@@ -6,7 +6,7 @@
  *
  * PART 2 (touch): emulate the XDJ-RX3's custom tsc2007 touch device
  * (/dev/tsc2007_2-0048) by translating the ILI2117 evdev touchscreen
- * (/dev/input/event0):
+ * (found by name, /dev/input/eventN):
  *   ioctl(fd, 0x80046b00, &x) -> return max X (=3)
  *   ioctl(fd, 0x40046b00, &x) -> accept
  *   ioctl(fd, 0x80026b01, &y) -> return max Y (=3900)
@@ -131,7 +131,10 @@ int usleep(useconds_t us)
 
 /* ============ PART 2: tsc2007 emulation ============ */
 #define TSC_DEVICE  "/dev/tsc2007_2-0048"
-#define EVDEV_PATH  "/dev/input/event0"
+/* The event number depends on probe order (gpio-keys can take event0), so
+ * find the touchscreen by name. Falls back to event1, then event0. */
+#define EVDEV_NAME  "ILI2117"
+#define EVIOCGNAME_255 0x80ff4506u
 #define RAW_MAX     2048
 #define TSC_MAX_X   3
 #define TSC_MAX_Y   3900
@@ -195,6 +198,26 @@ static void push_touch(int flag, int x, int y)
         (void)write(out_pipe[1], buf, 6);
 }
 
+static int open_touch_evdev(void)
+{
+    char path[32], name[256];
+    int i, fd;
+    for (i = 0; i < 16; i++) {
+        snprintf(path, sizeof(path), "/dev/input/event%d", i);
+        fd = real_open(path, O_RDWR);
+        if (fd < 0)
+            continue;
+        memset(name, 0, sizeof(name));
+        if (ioctl(fd, EVIOCGNAME_255, name) >= 0 && strstr(name, EVDEV_NAME))
+            return fd;
+        real_close(fd);
+    }
+    fd = real_open("/dev/input/event1", O_RDWR);
+    if (fd < 0)
+        fd = real_open("/dev/input/event0", O_RDWR);
+    return fd;
+}
+
 static void *reader_thread(void *arg)
 {
     struct input_event ev;
@@ -210,7 +233,7 @@ static void *reader_thread(void *arg)
             real_close(evfd);
             evfd = -1;
             while (evfd < 0) {
-                evfd = real_open(EVDEV_PATH, O_RDWR);
+                evfd = open_touch_evdev();
                 if (evfd < 0)
                     usleep(500000);
             }
@@ -265,7 +288,7 @@ static void ensure_reader(void)
 {
     if (reader_started)
         return;
-    evfd = real_open(EVDEV_PATH, O_RDWR);
+    evfd = open_touch_evdev();
     if (evfd < 0)
         return;
     if (real_pipe2(out_pipe) < 0) {

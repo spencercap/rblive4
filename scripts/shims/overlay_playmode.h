@@ -13,7 +13,7 @@ struct rb_overlay_shm {
      * this / 1000. Kept across a player restart when /tmp still exists. */
     volatile int jog_gain_milli;
     /* Displayed frames per second, x10, measured at FBIOPAN by fbshim.
-     * Last field: rot16 and knobshim map the older, shorter struct. */
+     * rot16 and knobshim map the older, shorter struct. */
     volatile int fps_x10;
     /* Screen backlight and panel LED brightness, percent. 0 = not set yet:
      * fbshim fills screen_pct from the current backlight, and LEDs run at
@@ -22,7 +22,14 @@ struct rb_overlay_shm {
     volatile int led_pct;
     /* Beat meter in the top bar, right of MOD. 0 = not set yet = BARS. */
     volatile int beat_mode;
+    /* LINK CUE for Track Preview (preview audio to the headphones).
+     * 0 = not set yet = ON, 1 = ON, 2 = OFF. Last field: rot16 and knobshim
+     * map the older, shorter struct. */
+    volatile int link_cue;
 };
+
+#define LINK_ON  1
+#define LINK_OFF 2
 
 #define BEAT_OFF   1
 #define BEAT_BARS  2
