@@ -8,7 +8,14 @@ Differences from [erhan-/rblive4](https://github.com/erhan-/rblive4), forked at 
 
 Track Preview (touch a track's mini waveform in the browse list to hear it from that point) is already in rbp, but its audio stays muted until the RX3's LINK CUE button turns it on, and the SC Live 4 has no such button. A new MOD row, **LINK**, sets it through `MixerEngine::setPreviewChHeadphoneCue`. It defaults to ON and is re-applied about once a second, because rbp resets it at startup. Preview plays in the headphones only. Touch Cue is a CDJ-3000X feature and does not exist in this firmware.
 
-Track Preview itself was rejected by rbp: the `0x3664b4` startup patch makes `isOnMessageThread()` always true, and `ui::PlayerPreview::loadPreview`, `setPreviewPosition` and `unloadPreview` return early when it is. `knobshim2` now reports false for the duration of those calls. rbp shows no moving playhead during preview.
+Track Preview itself was rejected by rbp: the `0x3664b4` startup patch makes `isOnMessageThread()` always true, and `ui::PlayerPreview::loadPreview`, `setPreviewPosition` and `unloadPreview` return early when it is. `knobshim2` now reports false for the duration of those calls. rbp shows no moving playhead during preview, so the port draws one (see below).
+
+### Preview playhead, seek throttle and touch filter
+
+* **Playhead.** A 3 px lime line with a dark outline moves along the previewed row's waveform. It follows the engine's real playback position and jumps when you scrub. It is drawn into the row's own window, so the screen driver needs no change.
+* **Scrubbing reaches the middle.** rbp's `TouchAdValueHysteresis` noise filter is tuned for the RX3's raw ADC counts (bands 50 and 100), far too coarse for the pixels this port feeds it. A slow drag crept one pixel per five samples and then jumped about 100 px. `knobshim2` divides the bands by 4. `/tmp/touch-band-div` overrides the divisor.
+* **Seek throttle.** Seeks are forwarded only after a 2% move and at most every 120 ms, with the last position sent after the gap.
+* `/tmp/preview-trace` turns on a log of the preview calls without a restart.
 
 ### Touch screen found by name
 

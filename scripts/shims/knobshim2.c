@@ -2714,6 +2714,214 @@ static int (*g_orig_pv_start)(int, unsigned);
 static int (*g_orig_pv_seek)(unsigned);
 static volatile int g_pv_logs;
 static int g_pv_trace;   /* PREVIEW_TRACE=1: log preview calls to /tmp/knobshim.log */
+
+/* ---- Track Preview playhead ---------------------------------------------
+ * rbp draws each preview row as a 200x38 16-bit window (table at 0x02684610,
+ * stride 28: window id +248, width +260, height +264) filled from a bitmap by
+ * ui_ListBrowse_DrawPreviewWave, and never reports a play position to the
+ * list.  So the playhead is drawn here: a one-pixel column in that window at
+ * the touched ratio, updated on every Seek.  The pixels under it are saved and
+ * put back, so the waveform bitmap stays intact; a normal rbp redraw of the row
+ * (the hook below) drops the saved column and draws the line again. */
+#define ADDR_DRAWWAVE      0x002980b8UL  /* ui_ListBrowse_DrawPreviewWave(row, row) */
+#define ADDR_GR_LOCK       0x001a1c48UL  /* DS_GR_LockWindow(win, void **buf, unsigned *pitch) */
+#define ADDR_GR_UNLOCK     0x001a1cb0UL  /* DS_GR_UnlockWindow(win) */
+#define ADDR_ACTIVE_INI    0x001218c8UL  /* UiGetActiveInicialNo() */
+#define PV_WIN_TABLE       0x02684610UL
+#define PV_WIN_STRIDE      28
+#define PH_ROWS            12
+#define PH_TICK_US         40000
+/* The window is RGB565 with 0xf81f (magenta) as the transparent color key. */
+#define PH_LIME    0x07e0   /* pure green */
+#define PH_EDGE    0x0000   /* black outline, so it shows on a green 3-band waveform too */
+#define PH_HALF    3        /* the caps reach this many pixels either side of the line */
+#define PH_CAP     3        /* cap height in rows */
+#define ADDR_PLAYENGINE   0x011497d0UL  /* PlayEngine singleton */
+#define ADDR_PP_TOTALLEN  0x00074064UL  /* playengine::PlayerPreview::getTotalLength() */
+#define PP_POS_OFF        1884          /* PlayerPreview frame counter (getPlayingTime ch 2 reads it) */
+
+/* Touch /tmp/preview-trace to log preview calls without restarting. */
+static int pv_tr(void)
+{
+     return g_pv_trace || access("/tmp/preview-trace", F_OK) == 0;
+}
+
+static void *ph_player(void)
+{
+     char *pe = *(char **)ADDR_PLAYENGINE;
+     char *vb, *ve;
+     if (!pe)
+          return NULL;
+     vb = *(char **)(pe + 24);
+     ve = *(char **)(pe + 28);
+     if (!vb || ve <= vb)
+          return NULL;
+     return *(void **)vb;
+}
+
+/* Playback position of the preview player as 0..1, or 0 when it is not known. */
+static int ph_engine_ratio(float *out)
+{
+     void *pp = ph_player();
+     int cur, tot;
+     float f;
+     if (!pp)
+          return 0;
+     cur = *(int *)((char *)pp + PP_POS_OFF);
+     tot = ((int (*)(void *))ADDR_PP_TOTALLEN)(pp);
+     if (tot <= 0 || cur < 0)
+          return 0;
+     f = (float)cur / (float)tot;
+     if (f > 1.0f)
+          f = 1.0f;
+     *out = f;
+     return 1;
+}
+
+/* Seek throttle.  A drag sends a Seek for every pixel; each one is a real file seek in the
+ * engine, the engine ignores moves under 3%, and the pool behind UiBrowsePreviewLoad_Seek runs dry,
+ * which blocks rbp's touch thread for seconds (the drag then jumps over the middle of the track).
+ * So forward a seek only after a real move and at most every SEEK_MIN_MS, and send the latest
+ * position once the gap has passed. */
+#define SEEK_MIN_MS     120
+#define SEEK_MIN_DELTA  0.02f
+static pthread_mutex_t g_sk_mtx = PTHREAD_MUTEX_INITIALIZER;
+static float g_sk_last;
+static unsigned long long g_sk_ms;
+static int g_sk_pending;
+static unsigned g_sk_bits;
+
+static unsigned long long sk_now_ms(void)
+{
+     struct timespec ts;
+     clock_gettime(CLOCK_MONOTONIC, &ts);
+     return (unsigned long long)ts.tv_sec * 1000ull + (unsigned long long)(ts.tv_nsec / 1000000);
+}
+
+static void (*g_orig_drawwave)(int, int);
+static volatile int g_ph_on;
+static volatile int g_ph_row = -1;
+static volatile unsigned g_ph_ratio_bits;
+static pthread_mutex_t g_ph_mtx = PTHREAD_MUTEX_INITIALIZER;
+static int g_ph_x = -1;
+static int g_ph_saved_row = -1;
+static int g_ph_saved_valid;
+static unsigned short g_ph_saved[(2 * PH_HALF + 1) * 64];
+static int g_ph_logs;
+
+static void ph_update(int row, int on)
+{
+     unsigned char *e;
+     int win, x, y;
+     unsigned w, h, stride;
+     void *buf = NULL;
+     unsigned pitch = 0;
+     unsigned short *p;
+     float f;
+
+     if (row < 0 || row >= PH_ROWS)
+          return;
+     e = (unsigned char *)(PV_WIN_TABLE + PV_WIN_STRIDE * row);
+     win = *(int *)(e + 248);
+     w = *(unsigned short *)(e + 260);
+     h = *(unsigned short *)(e + 264);
+     if (!win || w < 8 || w > 400 || h < 2 || h > 64)
+          return;
+     pthread_mutex_lock(&g_ph_mtx);
+     if (((int (*)(int, void **, unsigned *))ADDR_GR_LOCK)(win, &buf, &pitch) != 0 || !buf) {
+          pthread_mutex_unlock(&g_ph_mtx);
+          return;
+     }
+     p = (unsigned short *)buf;
+     stride = (pitch >= w * 2 && pitch <= w * 8) ? pitch / 2 : w;
+     if (g_ph_logs++ < 2)
+          klog("knobshim2: playhead window row=%d win=%d %ux%u pitch=%u\n", row, win, w, h, pitch);
+     if (g_ph_saved_valid && g_ph_saved_row == row && g_ph_x >= 0 && (unsigned)g_ph_x < w) {
+          int x0 = g_ph_x - PH_HALF, c;
+          for (y = 0; y < (int)h; y++)
+               for (c = 0; c < 2 * PH_HALF + 1; c++)
+                    if (x0 + c >= 0 && x0 + c < (int)w)
+                         p[y * stride + x0 + c] = g_ph_saved[y * (2 * PH_HALF + 1) + c];
+     }
+     g_ph_saved_valid = 0;
+     if (on) {
+          unsigned bits = g_ph_ratio_bits;
+          int x0, c;
+          memcpy(&f, &bits, sizeof(f));
+          ph_engine_ratio(&f);   /* real playback position when known, else the touched ratio */
+          x = (int)(f * (float)w);
+          if (x < 0)
+               x = 0;
+          if (x > (int)w - 1)
+               x = (int)w - 1;
+          x0 = x - PH_HALF;
+          for (y = 0; y < (int)h; y++)
+               for (c = 0; c < 2 * PH_HALF + 1; c++) {
+                    int px = x0 + c;
+                    unsigned short v;
+                    int cap = (y < PH_CAP || y >= (int)h - PH_CAP);
+                    if (px < 0 || px >= (int)w)
+                         continue;
+                    g_ph_saved[y * (2 * PH_HALF + 1) + c] = p[y * stride + px];
+                    if (cap)
+                         v = (c == 0 || c == 2 * PH_HALF) ? PH_EDGE : PH_LIME;
+                    else if (c == PH_HALF - 2 || c == PH_HALF + 2)
+                         v = PH_EDGE;
+                    else if (c >= PH_HALF - 1 && c <= PH_HALF + 1)
+                         v = PH_LIME;
+                    else
+                         continue;
+                    p[y * stride + px] = v;
+               }
+          g_ph_x = x;
+          g_ph_saved_row = row;
+          g_ph_saved_valid = 1;
+     }
+     ((void (*)(int))ADDR_GR_UNLOCK)(win);
+     pthread_mutex_unlock(&g_ph_mtx);
+}
+
+/* rbp redrew a row from its bitmap: the saved column is stale. */
+static void drawwave_hook(int row, int row2)
+{
+     if (g_orig_drawwave)
+          g_orig_drawwave(row, row2);
+     if (g_ph_saved_valid && g_ph_saved_row == row)
+          g_ph_saved_valid = 0;
+     if (g_ph_on && row == g_ph_row)
+          ph_update(row, 1);
+}
+
+static void *ph_thread(void *arg)
+{
+     (void)arg;
+     for (;;) {
+          usleep(PH_TICK_US);
+          if (g_ph_on && g_sk_pending) {
+               unsigned bits = 0;
+               int go = 0;
+               pthread_mutex_lock(&g_sk_mtx);
+               if (g_sk_pending && sk_now_ms() - g_sk_ms >= SEEK_MIN_MS) {
+                    float f;
+                    bits = g_sk_bits;
+                    memcpy(&f, &bits, sizeof(f));
+                    g_sk_last = f;
+                    g_sk_ms = sk_now_ms();
+                    g_sk_pending = 0;
+                    go = 1;
+               }
+               pthread_mutex_unlock(&g_sk_mtx);
+               if (go && g_orig_pv_seek)
+                    g_orig_pv_seek(bits);
+          }
+          if (g_ph_on) {
+               ph_update(g_ph_row, 1);
+          } else if (g_ph_saved_valid) {
+               ph_update(g_ph_saved_row, 0);
+          }
+     }
+     return NULL;
+}
 #define ADDR_PREVIEW_CHECK 0x00363680UL   /* TouchAreaProc_ToouchPreview::checkTouchOn(x,y) */
 static int (*g_orig_pv_check)(void *, unsigned, unsigned);
 static volatile int g_pv_chk_logs;
@@ -2844,7 +3052,8 @@ static volatile int g_ps_logs;
 
 static void playstate_hook(int st)
 {
-     if (g_ps_logs++ < 40)
+     g_ph_on = (st == 1);
+     if (pv_tr())
           klog("knobshim2: setPreviewPlayState(%d)\n", st);
      if (g_orig_playstate)
           g_orig_playstate(st);
@@ -2891,6 +3100,48 @@ static int vfs_hook(char *out, unsigned short *in, int sz)
      return r;
 }
 
+
+
+/* rbp's touch reader runs every sample through TouchAdValueHysteresis::procAdaptValue, a noise filter
+ * tuned for the raw ADC counts of the XDJ-RX3's resistive panel.  This port feeds it screen pixels,
+ * several times smaller, so its bands are far too wide: a slow drag creeps one pixel per five samples
+ * and then jumps ~100 px.  Shrink the four bands (x small/large, y small/large) by TOUCH_BAND_DIV
+ * (default 4, /tmp/touch-band-div overrides it at start). */
+#define ADDR_TOUCH_HYST   0x00363a74UL
+#define TOUCH_BAND_DIV    4
+static void (*g_orig_hyst)(void *, void *);
+static void *g_hyst_self;
+static unsigned g_hyst_orig[4];
+static unsigned g_hyst_div = TOUCH_BAND_DIV;
+
+static void hyst_hook(void *self, void *ts)
+{
+     unsigned *w = (unsigned *)self;
+     static const int idx[4] = {1, 2, 8, 9};   /* word offsets: +4, +8, +32, +36 */
+     int i;
+     if (self != g_hyst_self) {
+          FILE *f;
+          g_hyst_self = self;
+          for (i = 0; i < 4; i++)
+               g_hyst_orig[i] = w[idx[i]];
+          f = fopen("/tmp/touch-band-div", "r");
+          if (f) {
+               unsigned d = 0;
+               if (fscanf(f, "%u", &d) == 1 && d >= 1 && d <= 64)
+                    g_hyst_div = d;
+               fclose(f);
+          }
+          klog("knobshim2: touch hysteresis bands x=%u/%u y=%u/%u, divided by %u\n",
+               g_hyst_orig[0], g_hyst_orig[1], g_hyst_orig[2], g_hyst_orig[3], g_hyst_div);
+     }
+     for (i = 0; i < 4; i++) {
+          unsigned v = g_hyst_orig[i] / g_hyst_div;
+          w[idx[i]] = v ? v : 1;
+     }
+     if (g_orig_hyst)
+          g_orig_hyst(self, ts);
+}
+
 static int pv_check_hook(void *self, unsigned x, unsigned y)
 {
      int r = g_orig_pv_check ? g_orig_pv_check(self, x, y) : 0;
@@ -2904,21 +3155,54 @@ static int pv_check_hook(void *self, unsigned x, unsigned y)
 static int pv_start_hook(int row, unsigned bits)
 {
      int r = g_orig_pv_start ? g_orig_pv_start(row, bits) : 0;
-     float f;
-     void *me = *(void **)ME_SINGLETON;
-     memcpy(&f, &bits, sizeof(f));
-     klog("knobshim2: preview START row=%d ratio=%.3f ret=%d linkcue=%d\n",
-          row, f, r, me ? ((int (*)(void *))0x0005764cUL)(me) : -1);
+     g_ph_ratio_bits = bits;
+     {
+          float f0;
+          memcpy(&f0, &bits, sizeof(f0));
+          pthread_mutex_lock(&g_sk_mtx);
+          g_sk_last = f0;
+          g_sk_ms = sk_now_ms();
+          g_sk_pending = 0;
+          pthread_mutex_unlock(&g_sk_mtx);
+     }
+     g_ph_row = row - ((int (*)(void))ADDR_ACTIVE_INI)();
+     if (pv_tr()) {
+          float f;
+          void *me = *(void **)ME_SINGLETON;
+          memcpy(&f, &bits, sizeof(f));
+          klog("knobshim2: preview START idx=%d row=%d ratio=%.3f ret=%d linkcue=%d\n",
+               row, g_ph_row, f, r, me ? ((int (*)(void *))0x0005764cUL)(me) : -1);
+     }
      return r;
 }
 
 static int pv_seek_hook(unsigned bits)
 {
-     int r = g_orig_pv_seek ? g_orig_pv_seek(bits) : 0;
      float f;
+     int forward = 0, r = 1;
+     unsigned long long now = sk_now_ms();
      memcpy(&f, &bits, sizeof(f));
-     if (g_pv_logs++ < 40)
-          klog("knobshim2: preview SEEK ratio=%.3f ret=%d\n", f, r);
+     g_ph_ratio_bits = bits;
+     pthread_mutex_lock(&g_sk_mtx);
+     if (fabsf(f - g_sk_last) >= SEEK_MIN_DELTA) {
+          if (now - g_sk_ms >= SEEK_MIN_MS) {
+               g_sk_last = f;
+               g_sk_ms = now;
+               g_sk_pending = 0;
+               forward = 1;
+          } else {
+               g_sk_pending = 1;
+               g_sk_bits = bits;
+          }
+     }
+     pthread_mutex_unlock(&g_sk_mtx);
+     if (forward && g_orig_pv_seek)
+          r = g_orig_pv_seek(bits);
+     if (pv_tr()) {
+          float e = -1.0f;
+          ph_engine_ratio(&e);
+          klog("knobshim2: preview SEEK ratio=%.3f %s engine=%.3f\n", f, forward ? "sent" : "held", e);
+     }
      return r;
 }
 
@@ -2970,14 +3254,30 @@ static void install_preview_trace(void)
          *(volatile uint32_t *)(ADDR_UI_UNLOAD + 4) == 0xe1a05000u)
           g_orig_ui_unload = hook_function(ADDR_UI_UNLOAD, (void *)ui_unload_hook, "ui unloadPreview");
 
-     if (!g_pv_trace)
-          return;
-     /* Diagnostics only. */
+     /* Playhead: start/seek give the touched ratio, play state gives on/off. */
      if (*(volatile uint32_t *)ADDR_PREVIEW_START == 0xe92d4008u &&
          *(volatile uint32_t *)ADDR_PREVIEW_SEEK == 0xe1a01000u) {
           g_orig_pv_start = hook_function(ADDR_PREVIEW_START, (void *)pv_start_hook, "preview start");
           g_orig_pv_seek = hook_function(ADDR_PREVIEW_SEEK, (void *)pv_seek_hook, "preview seek");
      }
+     if (*(volatile uint32_t *)ADDR_SET_PLAYSTATE == 0xe309308cu &&
+         *(volatile uint32_t *)(ADDR_SET_PLAYSTATE + 4) == 0xe3403326u)
+          g_orig_playstate = hook_function(ADDR_SET_PLAYSTATE, (void *)playstate_hook, "setPreviewPlayState");
+     if (*(volatile uint32_t *)ADDR_DRAWWAVE == 0xe92d4ff0u &&
+         *(volatile uint32_t *)(ADDR_DRAWWAVE + 4) == 0xe2807001u) {
+          pthread_t th;
+          g_orig_drawwave = hook_function(ADDR_DRAWWAVE, (void *)drawwave_hook, "preview drawwave");
+          if (g_orig_drawwave && pthread_create(&th, NULL, ph_thread, NULL) == 0)
+               pthread_detach(th);
+     }
+
+     if (*(volatile uint32_t *)ADDR_TOUCH_HYST == 0xe5d13000u &&
+         *(volatile uint32_t *)(ADDR_TOUCH_HYST + 4) == 0xe52d4004u)
+          g_orig_hyst = hook_function(ADDR_TOUCH_HYST, (void *)hyst_hook, "touch hysteresis");
+
+     if (!g_pv_trace)
+          return;
+     /* Diagnostics only. */
      if (*(volatile uint32_t *)ADDR_DJ_LOADPREVIEW == 0xe92d41f0u &&
          *(volatile uint32_t *)(ADDR_DJ_LOADPREVIEW + 4) == 0xe1a05001u)
           g_orig_dj_load = hook_function(ADDR_DJ_LOADPREVIEW, (void *)dj_load_hook, "engine loadPreview");
@@ -2999,9 +3299,6 @@ static void install_preview_trace(void)
      if (*(volatile uint32_t *)ADDR_VFS_CONVERT == 0xe1d130b0u &&
          *(volatile uint32_t *)(ADDR_VFS_CONVERT + 4) == 0xe92d4070u)
           g_orig_vfs = hook_function(ADDR_VFS_CONVERT, (void *)vfs_hook, "vfs_convert_path");
-     if (*(volatile uint32_t *)ADDR_SET_PLAYSTATE == 0xe309308cu &&
-         *(volatile uint32_t *)(ADDR_SET_PLAYSTATE + 4) == 0xe3403326u)
-          g_orig_playstate = hook_function(ADDR_SET_PLAYSTATE, (void *)playstate_hook, "setPreviewPlayState");
      if (*(volatile uint32_t *)ADDR_UI_NOTIFYLOAD == 0xe92d4070u &&
          *(volatile uint32_t *)(ADDR_UI_NOTIFYLOAD + 4) == 0xe1a06000u)
           g_orig_notifyload = hook_function(ADDR_UI_NOTIFYLOAD, (void *)notifyload_hook, "notifyLoadResult");
