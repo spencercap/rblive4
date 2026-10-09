@@ -62,11 +62,11 @@ Symptom → cause → fix.
 ## Diagnostic tools
 
 * `tools/touchdump` (static ARM) — ILI2117 ranges + live events.
-* `crashcatch.so` — SIGSEGV `pc`/`lr` → `/tmp/crash.log`.
+* `crashcatch.so` — on SIGSEGV, SIGBUS, SIGILL, SIGFPE or SIGABRT, one line with the signal, `pc`, fault address, `lr` and `r0` to `r12` in `/tmp/crash.log`. It is not loaded by the launcher. rbp otherwise dies silently: `/data/start-rb.log` only says `stopped` and a segfault leaves nothing in `/data/rbp-p.log` (a glibc abort such as `double free` does print there). To use it, copy it to `/data/rbx3-run/usr/lib/`, put `/usr/lib/crashcatch.so` first in the `LD_PRELOAD` of the rbp line in `/data/start-rb.sh`, and restore the launcher afterwards. Map the `pc` to a function with `llvm-objdump -d` on `deploy/rbp-audio` (not PIE).
 * `KNOB_VERBOSE=1` → every MIDI event + keycode in `/tmp/knobshim.log`.
 * `cat /tmp/audioshim.log` — negotiated params + `sg`/peaks.
 * `cat /tmp/dfbdig*.log` — DirectFB bring-up (`ROTINIT` line).
 * `cat /tmp/rb-rot` — frames per 2 s, rotate avg/max µs, rbp draw µs, threads.
-* `hexdump -e '13/4 "%d " "\n"' /tmp/rb-overlay | cut -d' ' -f11` — fps ×10.
+* `hexdump -e '17/4 "%d " "\n"' /tmp/rb-overlay | cut -d' ' -f11` — fps ×10.
 * `aplay`/`amixer`/`alsactl` for audio probing. No `strace`/`gdb` on device —
   cross-build and `scp` if needed.

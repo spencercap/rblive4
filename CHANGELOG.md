@@ -4,10 +4,14 @@ Differences from [erhan-/rblive4](https://github.com/erhan-/rblive4), forked at 
 
 ## 2026-10-08
 
-### Track Preview, Touch Cue and two touch fixes
+### Track Preview, Touch Cue, SHIFT and SEARCH, and two touch fixes
 
 * **Track Preview works.** Touching a browse row's mini waveform plays it in the headphones. rbp has it, but four things stopped it here: its audio stays muted until the RX3's LINK CUE button turns it on (new MOD row **LINK**, default ON), the startup patch at `0x3664b4` made the player refuse every load, a noise filter in its touch reader kept slow drags from reaching the middle of the waveform, and it draws no playhead (now a lime line that follows the real position). Details in [docs/08 — Track Preview](docs/08-controls.md#track-preview).
 * **Touch Cue.** Touch and hold a playing deck's overview waveform to hear that point in the headphones while the deck keeps playing. Move to move the point, lift to stop. While held, a pad sets the matching hot cue there, and its LED lights as for any hot cue. New MOD row **TCUE** (default ON); OFF removes the touch area completely. A paused deck still uses Needle Search. See [docs/08 — Touch Cue](docs/08-controls.md#touch-cue). The audio is rough for now (TODO, noted there).
+* **Delete a hot cue with SHIFT + its pad.** The SC Live 4 SHIFT was not forwarded to rbp. It is now sent as rbp's SHIFT key (`0x4103`) around a pad press only, so rbp's own handler deletes the cue (engine, database and LED); every other SHIFT behaviour stays as it was.
+* **SHIFT + jog wheel searches.** rbp scans only once scanning has started, and nothing on the SC Live 4 starts it, so while SHIFT is held the shim drives `DjEngineIF::startScan` from the wheel speed using rbp's own five speed levels. The MOD JOG sensitivity still applies, with a fixed attenuation because this wheel's speed estimate runs high. Scanning stops when the wheel idles or SHIFT is released.
+* **SEARCH < > can jump 16 beats.** New MOD row **SKIP**: **SEARCH** (default, rbp's scan) or **16 BEATS**, which calls rbp's own beat jump (`playBeatJump`) so the cue state stays consistent. SHIFT + the Beat FX TIME encoder (BEAT `<` / `>`) was already wired and is documented now. All SHIFT behaviour is summarised in [docs/08 — SHIFT](docs/08-controls.md#shift).
+* **Crash diagnostics.** `crashcatch.c` now catches SIGBUS, SIGILL, SIGFPE and SIGABRT as well as SIGSEGV and logs the signal number. It is still not loaded by the launcher; the steps are in [docs/12](docs/12-troubleshooting.md#diagnostic-tools).
 * **Scrubbing no longer skips the middle.** rbp's `TouchAdValueHysteresis` filter has bands of 50 and 100 ADC counts, but this port feeds it pixels. A slow drag crept one pixel per five samples and then jumped about 100 px. The bands are now divided by 4. It affects every drag in the player.
 * **Touch screen found by name.** It was read from `/dev/input/event0`. On some boots Linux gives `event0` to `gpio-keys` and the ILI2117 becomes `event1`, which left touch dead while the knobs worked. `fbshim-tsc` now finds the device by its name.
 

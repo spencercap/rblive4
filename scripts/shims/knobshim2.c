@@ -179,6 +179,7 @@ static int is_rbp_process(void)
 #define K_SRFWD      0x411f    /* XDJ SEARCH > (beat jump next) */
 #define K_SRREV      0x4120    /* XDJ SEARCH < (beat jump prev) */
 #define K_PAD1       0x4117
+#define K_SHIFT      0x4103    /* rbp's SHIFT key (Player/PlayerInnards::onKey_Shift) */
 #define K_LOOPIN     0x410c
 #define K_LOOPOUT    0x410d
 #define K_RELOOP     0x410e
@@ -427,7 +428,14 @@ struct jog_ctrl {
      float speed;        /* last computed speed (rev/s) */
      float frac;         /* leftover sub-count after the sensitivity scale */
      int sch;
+     int scan;           /* SHIFT + jog search running: (level << 1) | reverse, 0 = none */
 };
+
+/* DjEngineIF::startScan(this, deck, level 0..5, reverse): level 0 stops. rbp's onKey_Jog calls it for a
+ * jog turned while scanning; here SHIFT + jog is what starts and drives the search (the RX3's SHIFT + jog). */
+#define ADDR_START_SCAN  0x000466d4UL
+#define SCAN_SCALE       0.25f
+#define START_SCAN(deck, lvl, rev) ((int (*)(void *, int, int, int))ADDR_START_SCAN)(NULL, deck, lvl, rev)
 static struct jog_ctrl jog_state[2] = { {4,0,0,0,0,0,0,0,0,0.0f,0.0f,1},
                                         {5,0,0,0,0,0,0,0,0,0.0f,0.0f,2} };
 
@@ -727,7 +735,17 @@ extern int rb_tcue_pad(int ch, int note, int on) __attribute__((weak));   /* ove
 
 static void handle_note(int ch, int note, int on)
 {
-     if (rb_tcue_pad && rb_tcue_pad(ch, note, on))
+     /* MOD SKIP = 16 BEATS: the SEARCH < > buttons (notes 6 and 7) jump 16 beats instead of scanning. */
+     if ((ch == 4 || ch == 5) && (note == 6 || note == 7)) {
+          if (!jog_ov)
+               jog_ov_load();
+          if (jog_ov && jog_ov->skip_mode == SKIP_BEATS) {
+               if (on)   /* DjEngineIF::playBeatJump(ch, type): 11 = back 16 beats, 12 = forward 16 */
+                    ((void (*)(void *, int, int))0x00049ae0)(NULL, ch - 4, note == 7 ? 12 : 11);
+               return;
+          }
+     }
+     if (rb_tcue_pad && (!shift_down || !on) && rb_tcue_pad(ch, note, on))
           return;   /* a pad pressed during Touch Cue sets a hot cue there */
      /* SC Live 4 mixer PFL buttons (strips 1/2 = ch 0/1, note 13): toggle
       * rbp's headphone cue directly (rbp has no PFL keycode).  Latching. */
@@ -923,7 +941,12 @@ static void handle_note(int ch, int note, int on)
                int key = note_map[i].key;
                int *p = &note_map[i].pressed;
                if (on && !*p) {
-                    *p = 1;
+                    /* SHIFT + hot cue pad deletes the cue in rbp.  The SC Live 4 SHIFT is otherwise not
+                     * forwarded, so tell rbp it is held only around the pad press (2 = wrapped). */
+                    int shifted = shift_down && key >= K_PAD1 && key <= K_PAD1 + 7;
+                    *p = shifted ? 2 : 1;
+                    if (shifted)
+                         send_rx_key(K_SHIFT, OP_PRESS, note_map[i].sch, 0);
                     if (ch == 4 || ch == 5) {
                          if (key == K_LOOPIN)
                               led_loop_armed[ch - 4] = 1;
@@ -938,8 +961,11 @@ static void handle_note(int ch, int note, int on)
                          klog("knobshim2: ch%d note%d -> 0x%04x press (sch%d)\n",
                               ch, note, key, note_map[i].sch);
                } else if (!on && *p) {
+                    int shifted = *p == 2;
                     *p = 0;
                     send_rx_key(key, OP_RELEASE, note_map[i].sch, 0);
+                    if (shifted)
+                         send_rx_key(K_SHIFT, OP_RELEASE, note_map[i].sch, 0);
                     if (verbose || key == K_FILTER || key == K_SWEEP ||
                         key == K_BFX || key == K_BEATPREV || key == K_BEATNEXT ||
                         key == K_TRFWD || key == K_TRREV ||
@@ -1063,6 +1089,22 @@ static void handle_jog(int ch, int cc, int val)
      if (speed < -8.0f) speed = -8.0f;
      s->moving = 1;
      s->speed = speed;
+     if (shift_down) {
+          /* rbp's own speed steps for a jog scan, fed the MOD-scaled speed (so MOD JOG still sets the feel)
+           * times SCAN_SCALE: those steps are for a real RX3 wheel, and this wheel's speed estimate runs high. */
+          float a = (speed < 0.0f ? -speed : speed) * SCAN_SCALE;
+          int lvl = a < 0.15f ? 0 : a < 0.5f ? 1 : a < 1.0f ? 2 : a < 1.8f ? 3 : a < 2.3f ? 4 : 5;
+          int want = lvl ? (lvl << 1) | (speed < 0.0f) : 0;
+          if (want != s->scan) {
+               START_SCAN(idx, lvl, speed < 0.0f);
+               s->scan = want;
+          }
+          return;
+     }
+     if (s->scan) {
+          START_SCAN(idx, 0, 0);
+          s->scan = 0;
+     }
      send_rx_key_fl(K_JOG_ROT, OP_ROTATE, s->sch, 0, speed, (long)s->vpos);
      if (jog_verbose)
           klog("knobshim2: jog ch%d delta=%d speed=%.2f pos=%u (sch%d)\n",
@@ -1086,6 +1128,10 @@ static void *jog_idle_thread(void *arg)
                     continue;
                s->moving = 0;
                s->speed = 0.0f;
+               if (s->scan) {
+                    START_SCAN(i, 0, 0);
+                    s->scan = 0;
+               }
                send_rx_key_fl(K_JOG_ROT, OP_ROTATE, s->sch, 0, 0.0f, (long)s->vpos);
                if (jog_verbose)
                     klog("knobshim2: jog ch%d idle -> speed 0\n", s->rch);

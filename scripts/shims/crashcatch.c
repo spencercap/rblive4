@@ -1,3 +1,9 @@
+/* crashcatch.so: optional debug tool, NOT loaded by the launcher.  On a fatal signal it appends one line to
+ * /tmp/crash.log (signal number, pc, fault address, lr, r0..r12) and exits.  rbp otherwise dies silently:
+ * start-rb.sh only logs "stopped", and a SIGSEGV leaves nothing in /data/rbp-p.log.
+ * To use it: build it (make crashcatch.so), copy it to /data/rbx3-run/usr/lib/, and put
+ * /usr/lib/crashcatch.so first in the LD_PRELOAD of the rbp line in /data/start-rb.sh.  Restore the
+ * launcher afterwards.  Map the pc to a function with llvm-objdump on deploy/rbp-audio (not PIE). */
 #define _GNU_SOURCE
 #include <signal.h>
 #include <unistd.h>
@@ -11,7 +17,7 @@ static void h(int sig, siginfo_t *si, void *uc) {
     unsigned int pc = (unsigned int)u->uc_mcontext.arm_pc;
     unsigned int ad = (unsigned int)si->si_addr;
     unsigned int lr = (unsigned int)u->uc_mcontext.arm_lr;
-    b[i++]='C';b[i++]='R';b[i++]='A';b[i++]='S';b[i++]='H';b[i++]=' ';
+    b[i++]='C';b[i++]='R';b[i++]='A';b[i++]='S';b[i++]='H';b[i++]='0'+sig/10;b[i++]='0'+sig%10;b[i++]=' ';
     b[i++]='p';b[i++]='c';b[i++]='=';b[i++]='0';b[i++]='x';
     for (int s=28;s>=0;s-=4) b[i++]=hex[(pc>>s)&15];
     b[i++]=' ';b[i++]='a';b[i++]='d';b[i++]='d';b[i++]='r';b[i++]='=';b[i++]='0';b[i++]='x';
@@ -39,4 +45,8 @@ __attribute__((constructor)) static void init(void) {
     sa.sa_flags = SA_SIGINFO;
     sigemptyset(&sa.sa_mask);
     sigaction(SIGSEGV, &sa, 0);
+    sigaction(SIGBUS, &sa, 0);
+    sigaction(SIGILL, &sa, 0);
+    sigaction(SIGFPE, &sa, 0);
+    sigaction(SIGABRT, &sa, 0);
 }

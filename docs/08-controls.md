@@ -49,6 +49,7 @@ A **MOD** tab at the top center of the screen opens this panel. Taps on the tab 
 | **STATS** | Read-only, for example `CPU 38%  FPS 60.4`. **CPU** is the busy share of all 4 cores over the last second (`/proc/stat`). **FPS** is displayed frames per second, counted at each `FBIOPAN_DISPLAY` ([06](06-display.md#frame-rate)). Updates while the panel is open. | No RX3 equivalent. |
 | **LINK** | **ON** (default) or **OFF**. This is the RX3's LINK CUE button for Track Preview: while ON, touching a track's mini waveform in the browse list plays it from that point into the headphones. The overlay re-applies it about once a second because rbp resets it at startup. Kept in `/tmp/rb-overlay`. | LINK CUE (`0x4408`), `MixerEngine::setPreviewChHeadphoneCue` |
 | **TCUE** | **ON** (default) or **OFF**. Touch Cue on the deck overview waveforms, see [Touch Cue](#touch-cue). **OFF** removes the touch area completely: the touch handler returns on its first check and the overview is back to rbp's Needle Search. Kept in `/tmp/rb-overlay`. | No RX3 equivalent. CDJ-3000X Touch Cue. |
+| **SKIP** | What the deck **SEARCH < >** buttons do. **SEARCH** (default): rbp's scan, hold to search. **16 BEATS**: each press jumps the deck 16 beats back or forward, on the beat, like the RX3's 16-beat jump pad. Lasts until reboot. | SEARCH REV / FWD (`0x4120` / `0x411f`), or `DjEngineIF::playBeatJump` types 11 and 12 |
 | **POWER** | Always the last row. The first tap shows **YES**. The **YES** tap ejects both sticks, then powers the unit off. Closing the panel before **YES** cancels it. | No RX3 key. The launcher handles the shutdown. |
 
 ### Track Preview
@@ -288,9 +289,21 @@ The pad-mode size tables below are still what rbp uses for its LOOP pads:
 
 * Parameter (23/24), Layer (31), StopTime (CC 37), Thru (note 15) — no
   direct rbp keycode, or needs a distinct param.
-* SHIFT (note 28 per deck) is tracked for the BEAT `<` / `>` combo while
-  TIME is held; other shift-actions are not wired.
+* SHIFT (note 28 per deck) does four things, see [SHIFT](#shift). Every other
+  RX3 SHIFT combination is not wired.
 * Pad-mode LEDs (11–13) and pad colours.
+
+### SHIFT
+
+The SC Live 4's SHIFT (note 28 on each deck) is not forwarded to rbp as a held key. The shim tracks it (`shift_down`) and uses it for:
+
+| With SHIFT | Does | How |
+|---|---|---|
+| a hot cue pad | deletes that hot cue | rbp's SHIFT key `0x4103` is sent around the pad press only, so rbp's own pad handler does the delete (engine, database, LED) |
+| the jog wheel | search | the shim drives `DjEngineIF::startScan`, see [Key gestures](#key-gestures-added-by-the-port) |
+| the Beat FX TIME encoder | BEAT `<` / `>` in any encoder mode | see [TIME encoder modes](#time-encoder-modes-bpm--ms--beat). In the default BEAT mode a plain turn already does it, so SHIFT shows only in the TIME and BPM modes. |
+
+Forwarding SHIFT to rbp all the time would turn on every shift function rbp has, which is untested here. The RX3's other SHIFT combinations (for example SHIFT + LOOP IN, which restarts a running loop) are not wired.
 
 ## LED output (SC Live 4 panel)
 
@@ -462,7 +475,10 @@ Controls the SC Live 4 has that the RX3 does not (or vice versa):
 |---|---|---|
 | **Hold SYNC** (≥ 600 ms) | `0x4111` K_MASTER | SC Live 4 has no MASTER button. Fires at the threshold, not on release. Tap = normal SYNC. |
 | **CENSOR** | `0x410e` K_RELOOP | reverse/censor is unused here; it makes a useful loop exit |
+| **SHIFT + hot cue pad** (note 28 held, pad notes 15 to 22) | `0x4103` K_SHIFT press, the pad key, release, release | Deletes that hot cue, as on the RX3. rbp's own pad handler does it (engine, database, LED). SHIFT is not otherwise forwarded to rbp: it is sent only around a pad press. |
 | **TIME push + turn** | `0x4490` / `0x4491` | RX3's BEAT `<` / `>` buttons, absent on the SC Live 4 |
+| **SHIFT + jog wheel** (note 28 held) | `DjEngineIF::startScan(deck, level, reverse)` | Search, as on the RX3. rbp scans only once scanning has started, and the SC Live 4 never starts it, so the shim drives it: the wheel speed (MOD JOG percent included, times `SCAN_SCALE` 0.25 because this wheel's speed estimate runs high) picks rbp's own levels 1 to 5 at 0.15 / 0.5 / 1.0 / 1.8 / 2.3. Scanning stops when the wheel idles or SHIFT is released. |
+| **SEARCH < >** (notes 6 / 7) with MOD **SKIP** = 16 BEATS | `DjEngineIF::playBeatJump(deck, 11 or 12)` | Back / forward 16 beats through rbp's own beat jump, which keeps its cue state consistent (a bare seek left CUE returning to the old cue). The press is not passed on as a search key. |
 
 The SYNC hold sends nothing until the threshold is reached; sending the press
 early and suppressing the release would leave rbp with a stuck SYNC press and

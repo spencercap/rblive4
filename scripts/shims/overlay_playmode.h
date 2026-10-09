@@ -26,15 +26,19 @@ struct rb_overlay_shm {
      * 0 = not set yet = ON, 1 = ON, 2 = OFF. */
     volatile int link_cue;
     /* Touch Cue on the deck overview waveforms, applied by knobshim2.
-     * 0 = not set yet = ON, 1 = ON, 2 = OFF. Last field: rot16 and knobshim
-     * map the older, shorter struct. */
+     * 0 = not set yet = ON, 1 = ON, 2 = OFF. */
     volatile int tcue_mode;
+    /* What the deck SEARCH < > buttons do: 0 = not set yet = SEARCH (scan), 1 = SEARCH, 2 = jump 16 beats.
+     * Last field: rot16 and knobshim map the older, shorter struct. */
+    volatile int skip_mode;
 };
 
 #define LINK_ON  1
 #define LINK_OFF 2
 #define TCUE_ON  1
 #define TCUE_OFF 2
+#define SKIP_SEARCH 1
+#define SKIP_BEATS   2
 
 #define BEAT_OFF   1
 #define BEAT_BARS  2

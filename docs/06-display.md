@@ -140,7 +140,7 @@ Each of these cost at least one refresh per frame:
 * Over SSH, the same number ×10 is the 11th word of the overlay shm (`fps_x10`):
 
   ```sh
-  hexdump -e '16/4 "%d " "\n"' /tmp/rb-overlay | cut -d' ' -f11   # 603 -> 60.3 fps
+  hexdump -e '17/4 "%d " "\n"' /tmp/rb-overlay | cut -d' ' -f11   # 603 -> 60.3 fps
   ```
 
 * `/tmp/rb-rot` is rewritten about every 2 s by the fbdev driver:
