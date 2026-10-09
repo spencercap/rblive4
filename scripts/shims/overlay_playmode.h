@@ -29,9 +29,22 @@ struct rb_overlay_shm {
      * 0 = not set yet = ON, 1 = ON, 2 = OFF. */
     volatile int tcue_mode;
     /* What the deck SEARCH < > buttons do: 0 = not set yet = SEARCH (scan), 1 = SEARCH, 2 = jump 16 beats.
-     * Last field: rot16 and knobshim map the older, shorter struct. */
+     */
     volatile int skip_mode;
+    /* What the two deck info boxes left of the waveforms show (INFO_*). 0 = not set yet = INFO_DEF.
+     * Last field: rot16 and knobshim map the older, shorter struct. */
+    volatile unsigned info_cfg;
+    /* Written by knobshim2 each time the info boxes update: CLOCK_MONOTONIC ms, low 32 bits. */
+    volatile unsigned deck_ms;
 };
+
+#define INFO_SET   0x80000000u   /* set once the MOD INFO row has been used */
+#define INFO_SRC   1u            /* rows shown, in box order: source, key, count, loop size */
+#define INFO_KEY   2u
+#define INFO_CNT   4u
+#define INFO_LOOP  8u
+#define INFO_BEATS 16u           /* the count is in beats, not bars */
+#define INFO_DEF   (INFO_KEY | INFO_CNT | INFO_LOOP)
 
 #define LINK_ON  1
 #define LINK_OFF 2

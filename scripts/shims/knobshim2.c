@@ -453,11 +453,11 @@ static void jog_ov_load(void)
      void *p;
      if (jog_ov)
           return;
-     fd = syscall(SYS_openat, AT_FDCWD, RB_OVERLAY_SHM, O_RDONLY, 0);
+     fd = syscall(SYS_openat, AT_FDCWD, RB_OVERLAY_SHM, O_RDWR, 0);
      if (fd < 0)
           return;
      p = (void *)syscall(SYS_mmap2, 0, sizeof(*jog_ov),
-                         PROT_READ, MAP_SHARED, fd, 0);
+                         PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
      syscall(SYS_close, fd);
      if (!p || p == (void *)-1)
           return;
@@ -2892,13 +2892,30 @@ static void install_preview_fixes(void)
 #define ADDR_COUNTDOWN      0x00184b10UL  /* CmnFunc_CmnInfo_GetLocalNowPlay_CountDownNum(deck) */
 #define ADDR_HOTCUE_IN      0x000fd750UL  /* UiGetHotCueINtime(deck, pad 0..7), -1 = empty */
 #define ADDR_BEAT_NO        0x000e3850UL  /* DJcont_searchBeatNo_forMemCue(deck, ms), -1 = no grid */
+#define ADDR_DECK_UPDATE    0x0028fa1cUL  /* ui_Deck_Update(deck): refreshes the two info boxes */
+#define ADDR_OBJ_BY_ID      0x0018dae8UL  /* ui_com_draw_GetObjectByID(handle, index) */
+#define ADDR_OBJ_REFRESH    0x0018e1a0UL  /* ui_com_draw_RefreshObject(handle, index) */
+#define ADDR_DECK_SET       0x002920ccUL  /* ui_CTRL_DECK_Set(): every tick of the player screen, never on Browse */
+#define ADDR_DECK_HANDLE    0x02683fb0UL  /* the draw handle ui_Deck_Update passes to those */
 #define CUE_BEATS(d)        ((unsigned *)(0x0322ab70UL + (d) * 0x12fd8UL + 0x10ef4UL))
-#define ADDR_DEVICE_BNE     0x0028fc14UL  /* ui_Deck_Update: bne to the "media present" device icon */
 
 static unsigned (*g_countdown)(int);
+static void (*g_deck_update)(int);
+static void (*g_deck_set)(void);
+
+/* The MOD INFO row's choice: bits INFO_SRC.. = rows shown, INFO_BEATS = count in beats. */
+static unsigned info_cfg(void)
+{
+     unsigned c;
+     if (!jog_ov)
+          jog_ov_load();
+     c = jog_ov ? jog_ov->info_cfg : 0;
+     return c & INFO_SET ? c : INFO_DEF;
+}
 
 /* The Bars row counts beats to the next memory cue, read from a sorted list of up to 10 cue beats (-1 ends
- * it) that rbp fills on track load and reads nowhere else.  Refill it with hot cues A-H before each read. */
+ * it) that rbp fills on track load and reads nowhere else.  Refill it with hot cues A-H before each read.
+ * rbp draws the value as bars.beats from the beat count; BEATS shows "NN" by passing four times the count. */
 static unsigned countdown_hook(int deck)
 {
      unsigned *a = CUE_BEATS(deck), b[8], v;
@@ -2917,29 +2934,86 @@ static unsigned countdown_hook(int deck)
      }
      for (i = 0; i < 10; i++)
           a[i] = i < n ? b[i] : ~0u;
-     return g_countdown(deck);
+     v = g_countdown(deck);
+     if (info_cfg() & INFO_BEATS)
+          return v < 100 ? v * 4 : 511;
+     return v;
 }
 
-/* Replace one instruction word, if it still holds w0. */
-static int patch_word(unsigned long addr, unsigned w0, unsigned w)
+/* Object indexes in rbp's CTRL_DECK, deck 1; deck 2 is 39 higher.  One list per row of the box: the row's
+ * objects and its group.  (rbp's own per-object visibility flag does not follow what is drawn; the group does.) */
+static const unsigned char deck_row[4][7] = {
+     { 10, 11 },                        /* source icon, group */
+     { 12, 13, 14 },                    /* key text and icon, group */
+     { 15, 16, 17, 18, 19, 20 },        /* Bars label, beat digit, bar digits, dot, group */
+     { 25, 26, 27 },                    /* loop size and icon, group */
+};
+
+static void deck_obj_show(void *h, int id)
 {
-     unsigned long pg = addr & ~4095UL;
-     if (*(volatile uint32_t *)addr != w0 || mprotect((void *)pg, 4096, PROT_READ | PROT_WRITE | PROT_EXEC) != 0)
-          return 0;
-     *(uint32_t *)addr = w;
-     mprotect((void *)pg, 4096, PROT_READ | PROT_EXEC);
-     __builtin___clear_cache((char *)addr, (char *)addr + 4);
-     return 1;
+     void *o = ((void *(*)(void *, int))ADDR_OBJ_BY_ID)(h, id);
+     if (o) {
+          ((void (*)(void *, int))(*(void ***)o)[5])(o, 1);
+          ((void (*)(void *, int))ADDR_OBJ_REFRESH)(h, id);
+     }
+}
+
+static void deck_obj_hide(void *h, int id)
+{
+     void *o = ((void *(*)(void *, int))ADDR_OBJ_BY_ID)(h, id);
+     void **vt = o ? *(void ***)o : NULL;
+     if (vt) {
+          ((void (*)(void *, int))ADDR_OBJ_REFRESH)(h, id);
+          ((void (*)(void *, int))vt[5])(o, 0);
+     }
+}
+
+/* rbp shows what it wants in ui_Deck_Update; hide what the MOD INFO row turned off right after, on the same
+ * (UI) thread and before the next paint.  It runs about 60 times a second per deck. */
+static void deck_update_hook(int deck)
+{
+     static unsigned last_cfg[2] = { ~0u, ~0u };   /* the first call redraws everything */
+     unsigned cfg = info_cfg();
+     void *h = *(void **)ADDR_DECK_HANDLE;
+     int r, i;
+     g_deck_update(deck);
+     if ((unsigned)deck > 1 || !h)
+          return;
+     for (r = 0; r < 4; r++) {
+          unsigned bit = INFO_SRC << r;
+          if (((cfg ^ last_cfg[deck]) & bit) == 0)
+               continue;
+          if (cfg & bit) {              /* shown again: put its objects back and redraw them.  rbp shows the loop
+                                         * size and icon itself when a loop starts, so those stay hidden until then */
+               for (i = 0; deck_row[r][i]; i++)
+                    if (r != 3 || !deck_row[r][i + 1])
+                         deck_obj_show(h, deck_row[r][i] + 39 * deck);
+          } else                        /* a hidden object leaves its pixels: redraw the row's background */
+               ((void (*)(void *, int))ADDR_OBJ_REFRESH)(h, 34 - r + 39 * deck);
+     }
+     last_cfg[deck] = cfg;
+     for (r = 0; r < 4; r++)
+          for (i = 0; deck_row[r][i]; i++)
+               if (!(cfg & (INFO_SRC << r)))
+                    deck_obj_hide(h, deck_row[r][i] + 39 * deck);
+}
+
+/* The overlay names the BEATS unit only while this runs, i.e. on the player screen. */
+static void deck_set_hook(void)
+{
+     if ((info_cfg() & INFO_BEATS) && jog_ov)
+          jog_ov->deck_ms = (unsigned)now_ms();
+     g_deck_set();
 }
 
 static void install_deck_panel(void)
 {
      if (!is_rbp_process())
           return;
-     /* The device row shows the source ("USB1").  Always take rbp's own empty-deck path, which hides it. */
-     int ok = patch_word(ADDR_DEVICE_BNE, 0x1a000295u, 0xe1a00000u);
+     g_deck_update = hook_function(ADDR_DECK_UPDATE, 0xe92d4ff0u, 0xe3a030dcu, deck_update_hook);
      g_countdown = hook_function(ADDR_COUNTDOWN, 0xe92d40f8u, 0xe0801080u, countdown_hook);
-     if (!ok || !g_countdown)
+     g_deck_set = hook_function(ADDR_DECK_SET, 0xe92d4038u, 0xe3a01ff9u, deck_set_hook);
+     if (!g_deck_update || !g_countdown || !g_deck_set)
           klog("knobshim2: deck panel: unexpected code, some changes are off\n");
 }
 

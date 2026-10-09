@@ -162,12 +162,17 @@ Each of these cost at least one refresh per frame:
 ## Deck info panel
 
 The two boxes left of the waveforms (DECK 1 and DECK 2) have four rows: the source, the key, a **Bars**
-countdown, and the loop size. `knobshim2` changes two of them. Both changes are always on.
+countdown, and the loop size. The MOD menu's **INFO** row turns each row on or off (the source row is off by
+default), and **COUNT** picks bars or beats for the countdown ([08](08-controls.md#mod-menu)). Both are
+`info_cfg` in `/tmp/rb-overlay`, read by `knobshim2`.
 
-* **Source row is blank.** It showed where the track came from ("USB1"). `ui_Deck_Update` picks the
-  device icon from the media type and hides it when the deck has no media. The `bne` at `0x28fc14` that
-  leads to the icon is replaced with a no-op, so rbp always takes its own empty-deck path. The row's
-  background stays.
+* **Hiding a row.** `ui_Deck_Update(deck)` (`0x28fa1c`), about 60 times a second per deck, sets what each row
+  shows. A hook runs it, then hides the row's objects (`GetObjectByID`, `setVisible(0)`) on rbp's own thread
+  before the paint. rbp's per-object visible flag does not follow what is drawn, so each row's group is hidden
+  too. Objects are CTRL_DECK children: source 10 and group 11, key 12, 13 and group 14, count 15 to 19 and group 20,
+  loop 25, 26 and group 27 (deck 2: +39). When a row is turned off, its background rectangle (34 down to 31)
+  is refreshed once so the old pixels go. When it is turned on again its objects are shown and refreshed; the
+  loop size and icon stay hidden until rbp shows them for the next loop. The row's background stays.
 * **Bars counts to the next hot cue (A–H), not the next memory cue.** rbp's
   `CmnFunc_CmnInfo_GetLocalNowPlay_CountDownNum(deck)` (`0x184b10`) reads a sorted list of up to 10 memory
   cue beat numbers per deck (at `0x0322ab70 + deck × 0x12fd8 + 0x10ef4`, `-1` ends it). rbp fills it on
@@ -177,3 +182,10 @@ countdown, and the loop size. `knobshim2` changes two of them. Both changes are 
   rest: the format (bars.beats), the colours, `--.-` past 400 beats or when no hot cue is ahead, and slip
   mode. A hot cue that is set or deleted shows up on the next frame. The cost is up to 8 lookups per deck
   per frame. `TotalCnt_SentinelTASK` reads the same value, so it changes there too.
+* **Beats.** rbp splits the count into bars (two digits) and a beat digit. For BEATS the hook returns four
+  times the count, so the two bar digits read as beats. Past 99 beats it shows `--`. The red warning rbp gives
+  at 16 beats then comes at 4 beats. rbp has no "Beats" label, so while BEATS is on the overlay (`fbshim-tsc`)
+  covers the dot, the beat digit and the Bars label with the box's colour and writes `BEATS`. It does so only
+  while `knobshim2` has just run `ui_CTRL_DECK_Set` (`0x2920cc`), which runs every tick of the player screen
+  and never on Browse (`deck_ms` in the shared file). The overlay's pixels stay until rbp redraws that spot,
+  so going back to BARS shows once the MOD panel is closed.

@@ -11,7 +11,8 @@
  * and display frames per second, counted at each FBIOPAN), LINK (ON, OFF:
  * LINK CUE, which lets Track Preview play into the headphones), TCUE (ON, OFF:
  * Touch Cue on the deck overview waveforms while a deck plays), SKIP (SEARCH, 16 BEATS:
- * what the SEARCH < > buttons do, applied by knobshim), and POWER.
+ * what the SEARCH < > buttons do, applied by knobshim), INFO (SRC, KEY, CUE, LOOP: which rows of the
+ * two deck info boxes are shown, applied by knobshim), COUNT (BARS, BEATS: the unit of the CUE row), and POWER.
  * POWER always stays the last row.
  * The MODE button cycles those four play modes. EJECT asks usb-watch to
  * release the stick; the button then reads PULL until the stick is removed.
@@ -102,10 +103,10 @@
 #define TAB_X ((1280 - TAB_W) / 2)
 #define TAB_Y 8
 
-/* Name on the left, value on the right. Fourteen rows under the MOD tab:
+/* Name on the left, value on the right. Sixteen rows under the MOD tab:
  * PAN_H = 2 * PAD + rows * ROW_H + (rows - 1) * ROW_GAP. */
 #define PAN_W 348
-#define PAN_H 628
+#define PAN_H 716
 #define PAN_X ((1280 - PAN_W) / 2)
 #define PAN_Y 48
 
@@ -147,8 +148,12 @@
 #define LINK_Y ROW_Y(10)
 #define TCUE_Y ROW_Y(11)
 #define SKIP_Y ROW_Y(12)
+#define INFO_Y ROW_Y(13)
+#define INFO_GAP 6
+#define INFO_BTN ((VAL_W - 3 * INFO_GAP) / 4)
+#define CNT_Y  ROW_Y(14)
 /* POWER is always the last row; add new rows above it. */
-#define PWR_Y  ROW_Y(13)
+#define PWR_Y  ROW_Y(15)
 
 #define COL_TAB    0xff1c2128u
 #define COL_PANEL  0xff121418u
@@ -180,6 +185,7 @@ static int          ov_link = 1;      /* 1 ON, 0 OFF, for drawing */
 static unsigned long long ov_link_ms;
 static int          ov_tcue = 1;      /* 1 ON, 0 OFF, for drawing */
 static int          ov_skip;          /* 1 = 16 BEATS, 0 = SEARCH, for drawing */
+static unsigned     ov_info = INFO_DEF;   /* shm info_cfg with the default filled in, for drawing */
 static volatile int ov_track_seq;
 static volatile int ov_track_act;     /* 1 TAG, 2 TAGS, 3 FIND */
 static int          ov_track_seen;
@@ -968,6 +974,14 @@ static void request_skip(int beats)
     __sync_synchronize();
 }
 
+/* The INFO and COUNT rows: flip one INFO_* bit.  knobshim reads the word on every deck info update. */
+static void request_info(unsigned bit)
+{
+    if (ov_shm)
+        ov_shm->info_cfg = (ov_info ^ bit) | INFO_SET;
+    __sync_synchronize();
+}
+
 static void request_tcue(int on)
 {
     on = on ? 1 : 0;
@@ -1442,6 +1456,27 @@ static void beat_paint(unsigned char *base, int page)
         beat_paint_us = us;
 }
 
+/* COUNT BEATS: rbp draws a bar count as "NN.B Bars".  The count is passed as four times the beats, so the
+ * two digits are the beats; cover the dot, the beat digit and the Bars label with the box's background and name
+ * the unit.  Only while knobshim has just run the box update (it stamps deck_ms), i.e. while the player screen
+ * is up.  rbp repaints the spot when a digit changes, so every frame (a few hundred pixels). */
+static void count_label_paint(unsigned char *base)
+{
+    static const int y[2] = {185, 406};
+    unsigned c;
+    int i;
+    if (!ov_shm)
+        return;
+    c = ov_shm->info_cfg;
+    if ((c & (INFO_SET | INFO_BEATS | INFO_CNT)) != (INFO_SET | INFO_BEATS | INFO_CNT) ||
+        (unsigned)mono_ms() - ov_shm->deck_ms > 300)
+        return;
+    for (i = 0; i < 2; i++) {
+        fill_visual(base, 55, y[i], 122, 26, 0xff181818u);
+        draw_text(base, 62, y[i] + 7, "BEATS", COL_TEXT);
+    }
+}
+
 static void set_beat_mode(int m)
 {
     if (!ov_shm)
@@ -1759,6 +1794,7 @@ void overlay_paint(int fb_fd, unsigned yoffset)
     char label[24];
     char name1[32];
     char name2[32];
+    int i;
 
     release_key();
     apply_pending();
@@ -1768,6 +1804,7 @@ void overlay_paint(int fb_fd, unsigned yoffset)
     apply_link();
     ov_tcue = !(ov_shm && ov_shm->tcue_mode == TCUE_OFF);
     ov_skip = ov_shm && ov_shm->skip_mode == SKIP_BEATS;
+    ov_info = ov_shm && (ov_shm->info_cfg & INFO_SET) ? ov_shm->info_cfg : INFO_DEF;
     apply_track();
     open = ov_is_open();
     if (open) {
@@ -1815,6 +1852,7 @@ void overlay_paint(int fb_fd, unsigned yoffset)
     if (page < 0 || page >= 3)
         page = 0;
     beat_paint(base, page);
+    count_label_paint(base);
     playhead_paint(base, page);
     hash = 2166136261u;
     hash = hash_bytes(hash, &open, sizeof(open));
@@ -1830,6 +1868,7 @@ void overlay_paint(int fb_fd, unsigned yoffset)
     hash = hash_bytes(hash, &ov_link, sizeof(ov_link));
     hash = hash_bytes(hash, &ov_tcue, sizeof(ov_tcue));
     hash = hash_bytes(hash, &ov_skip, sizeof(ov_skip));
+    hash = hash_bytes(hash, &ov_info, sizeof(ov_info));
     hash = hash_bytes(hash, &eject_arm, sizeof(eject_arm));
     hash = hash_bytes(hash, &pull1, sizeof(pull1));
     hash = hash_bytes(hash, &pull2, sizeof(pull2));
@@ -1921,6 +1960,19 @@ void overlay_paint(int fb_fd, unsigned yoffset)
     fill_visual(base, QUANT_OFF_X, TCUE_Y, QUANT_HALF, ROW_H, !ov_tcue ? COL_ON : COL_BTN);
     draw_text_centered(base, QUANT_OFF_X, TCUE_Y, QUANT_HALF, ROW_H, "OFF", COL_TEXT);
 
+    draw_label(base, INFO_Y, "INFO");
+    for (i = 0; i < 4; i++) {
+        static const char *info_name[4] = {"SRC", "KEY", "CUE", "LOOP"};
+        int x = VAL_X + i * (INFO_BTN + INFO_GAP);
+        fill_visual(base, x, INFO_Y, INFO_BTN, ROW_H, ov_info & (INFO_SRC << i) ? COL_ON : COL_BTN);
+        draw_text_centered(base, x, INFO_Y, INFO_BTN, ROW_H, info_name[i], COL_TEXT);
+    }
+    draw_label(base, CNT_Y, "COUNT");
+    fill_visual(base, QUANT_ON_X, CNT_Y, QUANT_HALF, ROW_H, !(ov_info & INFO_BEATS) ? COL_ON : COL_BTN);
+    draw_text_centered(base, QUANT_ON_X, CNT_Y, QUANT_HALF, ROW_H, "BARS", COL_TEXT);
+    fill_visual(base, QUANT_OFF_X, CNT_Y, QUANT_HALF, ROW_H, ov_info & INFO_BEATS ? COL_ON : COL_BTN);
+    draw_text_centered(base, QUANT_OFF_X, CNT_Y, QUANT_HALF, ROW_H, "BEATS", COL_TEXT);
+
     draw_label(base, SKIP_Y, "SKIP");
     fill_visual(base, QUANT_ON_X, SKIP_Y, QUANT_HALF, ROW_H, !ov_skip ? COL_ON : COL_BTN);
     draw_text_centered(base, QUANT_ON_X, SKIP_Y, QUANT_HALF, ROW_H, "SEARCH", COL_TEXT);
@@ -1999,7 +2051,7 @@ int overlay_touch(int down, int was_down, int lx, int ly)
     int on_usb1, on_usb2, on_blue, on_rgb, on_band, on_quant_on, on_quant_off, on_power;
     int on_tag, on_tags, on_find, on_link_on, on_link_off, on_tcue_on, on_tcue_off, on_skip_srch, on_skip_beats;
     int on_beat_off, on_beat_bars, on_beat_drift;
-    int on_scr_dn, on_scr_up, on_led_dn, on_led_up;
+    int on_scr_dn, on_scr_up, on_led_dn, on_led_up, on_cnt_bars, on_cnt_beats, info_hit = -1;
     int fresh;
     unsigned long long now;
     static unsigned long long last_ev_ms;
@@ -2035,6 +2087,11 @@ int overlay_touch(int down, int was_down, int lx, int ly)
         on_tcue_off = in_rect(vx, vy, QUANT_OFF_X, TCUE_Y, QUANT_HALF, ROW_H);
         on_skip_srch = in_rect(vx, vy, QUANT_ON_X, SKIP_Y, QUANT_HALF, ROW_H);
         on_skip_beats = in_rect(vx, vy, QUANT_OFF_X, SKIP_Y, QUANT_HALF, ROW_H);
+        on_cnt_bars = in_rect(vx, vy, QUANT_ON_X, CNT_Y, QUANT_HALF, ROW_H);
+        on_cnt_beats = in_rect(vx, vy, QUANT_OFF_X, CNT_Y, QUANT_HALF, ROW_H);
+        for (info_hit = 3; info_hit >= 0; info_hit--)
+            if (in_rect(vx, vy, VAL_X + info_hit * (INFO_BTN + INFO_GAP), INFO_Y, INFO_BTN, ROW_H))
+                break;
         on_tag = in_rect(vx, vy, WAVE_X, TRACK_Y, WAVE_BTN, ROW_H);
         on_tags = in_rect(vx, vy, WAVE_X + (WAVE_BTN + WAVE_GAP), TRACK_Y, WAVE_BTN, ROW_H);
         on_find = in_rect(vx, vy, WAVE_X + 2 * (WAVE_BTN + WAVE_GAP), TRACK_Y, WAVE_BTN, ROW_H);
@@ -2111,6 +2168,12 @@ int overlay_touch(int down, int was_down, int lx, int ly)
                 request_skip(0);
             else if (on_skip_beats)
                 request_skip(1);
+            else if (info_hit >= 0)
+                request_info(INFO_SRC << info_hit);
+            else if (on_cnt_bars && (ov_info & INFO_BEATS))
+                request_info(INFO_BEATS);
+            else if (on_cnt_beats && !(ov_info & INFO_BEATS))
+                request_info(INFO_BEATS);
             else if (on_tag)
                 request_track(1);
             else if (on_tags) {

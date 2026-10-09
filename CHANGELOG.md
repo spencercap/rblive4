@@ -6,7 +6,8 @@ Differences from [erhan-/rblive4](https://github.com/erhan-/rblive4), forked at 
 
 ### Deck info panel
 
-* **The source row ("USB1") is blank.** It only said where the track came from.
+* **MOD INFO row.** Turns each of the four rows of the deck info boxes on or off: SRC (where the track came from, "USB1"; off by default), KEY, CUE and LOOP.
+* **MOD COUNT row.** The countdown shows bars (default) or plain beats.
 * **Bars counts down to the next hot cue (A–H) instead of the next memory cue.** rbp still draws it, with its own format and colours, and shows `--.-` when no hot cue is ahead. See [docs/06 — Deck info panel](docs/06-display.md#deck-info-panel).
 
 ## 2026-10-08
