@@ -42,6 +42,24 @@ Until rbp draws its first frame (about 3 to 4 seconds after the old one is kille
 * **Skipped when it cannot be right.** No `/data/splash.raw.gz`, or `/sys/class/graphics/fb0` is not 32 bpp with a stride of 3200: the screen is left as it was. To turn the boot screen off, delete `/data/splash.raw.gz`.
 * **Making your own.** `python3 tools/make-splash.py LOGO.png OUT_DIR` fits any image on a black 1280×800 screen (nearly black pixels become pure black, the margin is trimmed, the logo is 1000 px wide) and writes `splash.png` (the preview, kept in [`scripts/device/`](../scripts/device/)) and `splash.raw.gz`. Copy that to `/data/splash.raw.gz` and restart the launcher.
 
+## My Tag sync
+
+rbp writes My Tag edits to the stick's `PIONEER/rekordbox/exportExt.pdb` only (see [08 — My Tags](08-controls.md#my-tags-in-the-info-panel)). rekordbox for Mac/Windows, and newer players, read the stick's other library, `exportLibrary.db` (OneLibrary, formerly Device Library Plus), which keeps the tags from the last export. The launcher keeps the two equal, on the unit, with no computer involved.
+
+* **When.** Step 10's wait loop polls `exportExt.pdb` of both slots every 2 s (`stat`, about nothing). When its time and size change and then stay the same for one more poll, it runs `/data/mytags-onelib` once, under `chrt -i 0` (idle priority, so the decks are never starved) and `/data/timeout 60`. An edit shows up in `exportLibrary.db` about 4 to 6 seconds later; the launcher also runs it once for each stick after it starts.
+* **What it does.** [`mytags-onelib.c`](../scripts/device/mytags-onelib.c) reads the tag assignments from `exportExt.pdb` (type 4 rows) and the tracks' file paths from `export.pdb` (type 0 rows, string 20), opens `exportLibrary.db` and makes `myTag_content` match, for every track that is in both libraries (matched by file path: the two libraries number their tracks differently, Das Rite is 1168 in `export.pdb` and 1165 in `exportLibrary.db`). Tags are matched by id; `myTag` already holds the same ids rekordbox exported. Nothing else in the file is touched. The player wins over rekordbox for those tracks.
+* **The database** is SQLCipher 4 (page size 4096, PBKDF2 256000 rounds, so opening takes about 3 s on the unit) in WAL mode. The helper opens it with `locking_mode=exclusive` (no `-shm` file on the FAT stick), changes the rows inside one transaction, runs `integrity_check` and checkpoints, so no `-wal` is left behind. Before its first change of a day it copies the file to `/data/onelib-backup/exportLibrary-YYYYMMDD.db`. Log: `/data/mytags-onelib.log`. `mytags-onelib -n DIR` prints the changes without writing (it opens the file immutable and leaves nothing on the stick).
+* **Files.** `/data/mytags-onelib` is a static ARM build of the helper: `build-env/run.sh sh rblive4_sc/tools/build-sqlcipher/build.sh` builds SQLCipher 4 and OpenSSL 3 from source in the build container and writes `rblive4_sc/work/sqlcipher/mytags-onelib` (not committed). `/data/onelibrary.key` holds the OneLibrary key, one line. It is the key pyrekordbox uses and is not in this repo; to write it:
+
+  ```python
+  # pip install git+https://github.com/dylanljones/pyrekordbox.git   (PyPI's 0.4.4 lacks onelibrary)
+  from pyrekordbox.onelibrary.database import BLOB
+  from pyrekordbox.utils import deobfuscate
+  open("onelibrary.key", "w").write(deobfuscate(BLOB) + "\n")
+  ```
+* **Skipped when it cannot be right.** No helper, no key file, or a stick without `exportLibrary.db`: nothing happens. A failed run (wrong key, a stick pulled out) is logged and tried again at the next change.
+* **Not tested with rekordbox itself.** The stick's `exportLibrary.db` now holds the player's tags and passes SQLite's integrity check, and pyrekordbox reads them back. Pioneer documents rekordbox's **Update Collection** as bringing back cue points and beat grids, and says nothing about My Tags, so whether rekordbox imports them is something to check on a computer.
+
 ## Finding processes: not `ps w`
 
 On Engine OS 5.x, `ps` is procps-ng (`/usr/bin/ps.procps`), not BusyBox. In

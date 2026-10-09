@@ -6,6 +6,7 @@ Workstation-side tooling. Nothing here runs on the SC Live 4.
 |---|---|---|
 | [`patch-rbp/`](patch-rbp/) | Python | apply the interoperability patches to a stock `rbp` |
 | [`build-directfb/`](build-directfb/) | C / patch | patched DirectFB 1.4.16 (core + fbdev + modules) for the Rockchip fb |
+| [`build-sqlcipher/`](build-sqlcipher/) | shell (Docker) | SQLCipher + a static OpenSSL for ARM, and the on-device My Tag sync helper [`mytags-onelib`](../scripts/device/mytags-onelib.c) built with them |
 | [`make-splash.py`](make-splash.py) | Python (Pillow) | turn a logo into the launcher's boot screen (`splash.raw.gz` for `/data`, see [docs/11](../docs/11-runtime-launcher.md#boot-screen)) |
 | [`touchdump.c`](touchdump.c) | C | static ARM tool: dump an evdev touchscreen's ABS ranges + live events |
 

@@ -13,6 +13,12 @@ Also needed on the device:
 * `/data/timeout` — build it from [`timeout.c`](timeout.c) with
   `make CROSS=arm-linux-gnueabihf-` in this directory; used by `usb-watch.sh`
   so a FIFO write to a dead rbp can never block the watcher.
+* `/data/mytags-onelib` and `/data/onelibrary.key` — the My Tag sync (see
+  [docs/11](../../docs/11-runtime-launcher.md#my-tag-sync)). Build the helper from
+  [`mytags-onelib.c`](mytags-onelib.c) with
+  [`tools/build-sqlcipher/build.sh`](../../tools/build-sqlcipher/build.sh) (it needs SQLCipher and OpenSSL, so
+  `make` here does not build it). Without either file the launcher skips the sync.
+* `/data/splash.raw.gz` — the boot screen (see [docs/11](../../docs/11-runtime-launcher.md#boot-screen)).
 * `/data/rbp-audio`, `/data/knobshim2.so`, `/data/audioshim.so`,
   `/data/fbshim-tsc.so`, `/data/libdirectfb_fbdev-rot16.so` — the runtime files
   `start-rb.sh` copies into the chroot (already baked into the chroot tarball).

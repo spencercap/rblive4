@@ -113,12 +113,35 @@ poweroff_clean() {
   exit 0
 }
 
+# My Tag sync. rbp writes tag edits to the stick's exportExt.pdb only; rekordbox on the computer reads
+# exportLibrary.db. /data/mytags-onelib (scripts/device/mytags-onelib.c) copies the player's tags into it. It runs
+# once per change of exportExt.pdb, a poll after the file stopped changing, at the lowest CPU priority so the
+# decks are never starved. Needs /data/mytags-onelib and /data/onelibrary.key; without them nothing happens.
+tag_seen1=; tag_done1=; tag_seen4=; tag_done4=
+tagsync() {
+  [ -x /data/mytags-onelib ] && [ -f /data/onelibrary.key ] || return
+  for n in 1 4; do
+    d=/media/usb$n/sda1/PIONEER/rekordbox
+    [ -f $d/exportExt.pdb ] && [ -f $d/exportLibrary.db ] || continue
+    stamp=$(stat -c '%Y.%s' $d/exportExt.pdb 2>/dev/null)
+    eval "seen=\$tag_seen$n; done=\$tag_done$n"
+    if [ "$stamp" != "$seen" ]; then
+      eval "tag_seen$n=$stamp"
+    elif [ "$stamp" != "$done" ]; then
+      eval "tag_done$n=$stamp"
+      { date '+%F %T usb'$n; chrt -i 0 /data/timeout 60 /data/mytags-onelib -b /data/onelib-backup $d; } \
+        >> /data/mytags-onelib.log 2>&1
+    fi
+  done
+}
+
 # 10. Wait while rbp is running (so launcher does not redraw on top of rbp)
 if [ -n "$RBP" ]; then
   while kill -0 $RBP 2>/dev/null; do
     if [ -f /tmp/rb-poweroff ]; then
       poweroff_clean
     fi
+    tagsync
     sleep 2
   done
 fi

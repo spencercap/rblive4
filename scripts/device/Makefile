@@ -1,7 +1,8 @@
 # scripts/device/Makefile
 #
 # Builds the on-device `timeout` helper (hard-float ARM, static). The rest of
-# scripts/device/ is shell that runs as-is on the SC Live 4.
+# scripts/device/ is shell that runs as-is on the SC Live 4, except mytags-onelib.c,
+# which needs SQLCipher: tools/build-sqlcipher/build.sh builds that one.
 #
 #   make CROSS=arm-linux-gnueabihf-
 

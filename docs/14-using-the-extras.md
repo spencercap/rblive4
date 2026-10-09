@@ -74,7 +74,8 @@ See and change a track's **My Tags** (the genre, mood and other tags you set in 
 * The list stays on top of rbp's scrolling comment line and the "TRACK n/m" text, and it costs no measurable CPU or frame rate (about 60 fps with the panel open, same as with the list off).
 * Tags are shown in capitals.
 * If the stick has no My Tags (rekordbox writes them to `PIONEER/rekordbox/exportExt.pdb` when it exports), the area keeps rbp's artwork and there is nothing to show.
-* **Careful:** this edits your stick's library. A copy of the tag file is saved on the unit before the first change of each run (`/data/rbx3-run/mytags-backup/`). rekordbox on your computer does not read these changes, and its next export of the stick replaces them.
+* **Careful:** this edits your stick's library. A copy of the tag file is saved on the unit before the first change of each run (`/data/rbx3-run/mytags-backup/`).
+* **Getting the tags into rekordbox:** the unit copies every tag change into the stick's other library file (`exportLibrary.db`, the one rekordbox for Mac reads) by itself, about 5 seconds after you tap, so there is nothing to run. Then plug the stick into the computer and use rekordbox's **Update Collection** on the device. Pioneer only documents cue points and beat grids coming back that way, so check that your tags arrive (if they do not, rekordbox's import does not cover My Tags). Exporting the stick from rekordbox again replaces the stick's tags with the library's, so do that only after you have brought the tags back, or you lose the edits you made on the player.
 
 Details: [08 — My Tags](08-controls.md#my-tags-in-the-info-panel).
 
