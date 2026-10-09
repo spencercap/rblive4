@@ -40,6 +40,7 @@ New in this fork, on top of the port. **How to use each one: [docs/14 — Using 
 | Feature | What it does | How to use it |
 |---|---|---|
 | MOD menu | on-screen settings panel: quantize, waveform colour, screen and LED brightness, eject USB, power off. Scrolls by dragging. | [use](docs/14-using-the-extras.md#the-mod-menu) · [ref](docs/08-controls.md#mod-menu) |
+| Record to SD | the SD slot shows as USB 2; MOD **REC** records the master mix to it as a WAV | [use](docs/14-using-the-extras.md#recording-a-set) · [ref](docs/10-usb.md#sd-card-slot) |
 | Memory cues | **SLIP** stores one, the pad page **◄ ►** jump between them, **SHIFT + ◄** deletes | [use](docs/14-using-the-extras.md#memory-cues-slip-and-the-pad-page-arrows) · [ref](docs/08-controls.md#memory-cues) |
 | Hot cue countdown | the deck info box counts to the next hot cue, in bars or beats | [use](docs/14-using-the-extras.md#the-hot-cue-countdown-deck-info-boxes) · [ref](docs/06-display.md#deck-info-panel) |
 | Deck info rows | show or hide source, key, countdown and loop size; **INFO OFF** restores stock rbp | [use](docs/14-using-the-extras.md#the-hot-cue-countdown-deck-info-boxes) · [ref](docs/06-display.md#deck-info-panel) |

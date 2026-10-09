@@ -6,7 +6,7 @@ On-device scripts (ship to `/data/` on the SC Live 4).
 |---|---|
 | `fix-dev.sh` | bind mounts (`/dev /proc /sys /tmp`), device stubs, `/tmp/udev_*` FIFOs, `etc/mtab` symlink. Run after every reboot. |
 | `start-rb.sh` | stop Engine OS + `edisksd`, prepare the chroot, start `edb_streamd` then `rbp`, start the USB watcher. |
-| `usb-watch.sh` | hotplug the USB-A media port (`usb1`), mount + bind into the chroot, notify rbp via `/tmp/udev_usb1`; retries until rbp opens `export.pdb`. |
+| `usb-watch.sh` | hotplug the USB-A media port (`usb1`) and the SD slot (`mmcblk1`, shown as USB 2), mount + bind into the chroot, notify rbp via `/tmp/udev_usb1` or `/tmp/udev_usb2`; retries until rbp opens `export.pdb` (media with no rekordbox library is notified once). |
 
 Also needed on the device:
 

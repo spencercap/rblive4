@@ -1,9 +1,11 @@
 #!/bin/sh
 # =============================================================================
-# usb-watch.sh — SC Live 4 USB-A media ports -> rbp (rekordbox player)
+# usb-watch.sh — SC Live 4 USB-A media port and SD slot -> rbp (rekordbox player)
 #
-# Two sticks. The first one seen is RX3 USB 1, the second is RX3 USB 2.
-# They stay in those slots until ejected or unplugged.
+# Two slots. A USB stick takes RX3 USB 1 (USB 2 if USB 1 is busy). The SD card
+# takes USB 2 (USB 1 if USB 2 is busy), so a library stick plus a recording SD
+# always land as USB 1 and USB 2. They stay in those slots until ejected or
+# removed.
 #
 #   slot 1: /dev/sdX1 -> /media/usb1/sda1  FIFO /tmp/udev_usb1
 #   slot 2: /dev/sdY1 -> /media/usb4/sda1  FIFO /tmp/udev_usb2
@@ -42,16 +44,25 @@ slot_name() { echo "/tmp/usb-name-$1"; }
 slot_pull() { echo "/tmp/usb-pull-$1"; }
 slot_req()  { echo "/tmp/usb-eject-$1"; }
 
+# The SD slot is mmc host 1. Its card reports device/type SD; the internal
+# eMMC (/data, rootfs) reports MMC and must never be picked up.
+is_sd() { [ "$(cat "/sys/block/$1/device/type" 2>/dev/null)" = SD ]; }
+
 # One kernel disk name per line, stable order (sysfs path).
 list_media_sd() {
-  for blk in /sys/block/sd*; do
+  for blk in /sys/block/sd* /sys/block/mmcblk[0-9]; do
     [ -e "$blk" ] || continue
+    name=${blk##*/}
     tgt=$(readlink "$blk" 2>/dev/null) || continue
-    for b in $BUSES; do
-      case "$tgt" in
-        *"/usb$b/"*) echo "$tgt ${blk##*/}"; break ;;
-      esac
-    done
+    case "$name" in
+      mmcblk*) is_sd "$name" && echo "$tgt $name" ;;
+      *)
+        for b in $BUSES; do
+          case "$tgt" in
+            *"/usb$b/"*) echo "$tgt $name"; break ;;
+          esac
+        done ;;
+    esac
   done | sort | awk '{print $2}'
 }
 
@@ -61,9 +72,10 @@ still_here() {
 
 find_partition() {
   dev=$1
+  case "$dev" in mmcblk*) sfx=p ;; *) sfx= ;; esac
   i=0
   while [ $i -lt 40 ]; do
-    [ -b "/dev/${dev}1" ] && { echo "${dev}1"; return 0; }
+    [ -b "/dev/${dev}${sfx}1" ] && { echo "${dev}${sfx}1"; return 0; }
     i=$((i + 1)); sleep 0.1
   done
   if blkid "/dev/$dev" >/dev/null 2>&1; then echo "$dev"; return 0; fi
@@ -97,6 +109,15 @@ write_label() {
 notify_mount_until_open() {
   slot=$1
   mnt=$(slot_mnt "$slot")
+  # No library (a recording SD, a plain stick): one mount notice. Waiting for
+  # export.pdb would re-mount it every 8 s for ~100 s and stall this loop.
+  if [ ! -f "$mnt/PIONEER/rekordbox/export.pdb" ]; then
+    notify_slot "$slot" "umount $mnt"
+    sleep 0.3
+    notify_slot "$slot" "mount $mnt"
+    log "slot$slot: no rekordbox export, not waiting for rbp"
+    return 0
+  fi
   n=0
   while [ $n -lt 12 ]; do
     sleep 4
@@ -236,11 +257,13 @@ fill_free_slots() {
     if [ "$dev" = "$dev1" ] || [ "$dev" = "$dev2" ]; then
       continue
     fi
-    if [ -z "$dev1" ]; then
-      if attach 1 "$dev"; then dev1=$dev; else log "slot1: attach $dev failed"; fi
-    elif [ -z "$dev2" ]; then
-      if attach 2 "$dev"; then dev2=$dev; else log "slot2: attach $dev failed"; fi
-    fi
+    if is_sd "$dev"; then order="2 1"; else order="1 2"; fi
+    for s in $order; do
+      eval "cur=\$dev$s"
+      [ -z "$cur" ] || continue
+      if attach "$s" "$dev"; then eval "dev$s=\$dev"; else log "slot$s: attach $dev failed"; fi
+      break
+    done
   done
 }
 

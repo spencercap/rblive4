@@ -4,6 +4,16 @@ Differences from [erhan-/rblive4](https://github.com/erhan-/rblive4), forked at 
 
 ## 2026-10-09
 
+### Record a set to the SD card
+
+* **MOD row REC starts and stops a recording** of the master mix to USB 2, as `PIONEER REC/REC###.WAV` (16-bit stereo 44.1 kHz). Tap **START**; the button turns red and reads **STOP**; **STOP** then **YES** ends it. It says **NO USB 2** with nothing mounted there, and **NOT READY** if the recorder rejects the folder. EJECT on USB 2 and POWER stop a recording first. See [docs/14 — Recording](docs/14-using-the-extras.md#recording-a-set).
+* **Why not rbp's REC key:** it only records to a USB 2 whose rekordbox database is attached, so an SD card with no library is refused silently. The row creates `PIONEER REC`, calls `MixerEngine::prepareRecording`, waits for the recorder to accept the folder, then `startRecording`. It costs one comparison per paint when idle. The MOD panel is one row taller (REC sits above POWER).
+
+### SD card as a USB slot
+
+* **The SD slot now shows in rbp as USB 2**, so a set can be recorded to the card. `usb-watch.sh` lists an `mmcblk*` whose `device/type` is `SD` (never the internal eMMC), uses the `p1` partition name for it, and mounts it into the chroot like a stick. The card takes USB 2 and a stick takes USB 1, so a library stick plus an SD card are always USB 1 and USB 2. See [docs/10 — SD card slot](docs/10-usb.md#sd-card-slot).
+* **Media with no rekordbox library is notified once.** Before, `usb-watch.sh` re-mounted it every 8 s for about 100 s waiting for `export.pdb`, which stalled the watcher (eject requests and the other slot) and would have cut a recording on the card.
+
 ### Boot screen
 
 * **The launcher paints a logo while rbp starts.** Before, the panel kept the last frame (Engine's, or the old rbp's) for several seconds. After it kills the old processes, `start-rb.sh` now writes `/data/splash.raw.gz` to all three fb0 pages; rbp's first frame replaces it. No file, or an fb0 that is not 32 bpp, and it is skipped. `tools/make-splash.py` builds the file from any image. See [docs/11 — Boot screen](docs/11-runtime-launcher.md#boot-screen).

@@ -2,7 +2,7 @@
 
 A how-to for everything this fork adds on top of the stock port. Each item says what it does, how to use it on the unit, and where the details are. Nothing here needs SSH once the player is running.
 
-**Jump to:** [MOD menu](#the-mod-menu) · [My Tags](#my-tags-in-the-track-info-panel) · [Memory cues](#memory-cues-slip-and-the-pad-page-arrows) · [Hot cue countdown](#the-hot-cue-countdown-deck-info-boxes) · [Beat meter](#beat-meter) · [SHIFT combos](#shift-combos) · [Touch Cue](#touch-cue) · [Track Preview](#track-preview) · [Boot screen](#boot-screen)
+**Jump to:** [MOD menu](#the-mod-menu) · [Recording](#recording-a-set) · [My Tags](#my-tags-in-the-track-info-panel) · [Memory cues](#memory-cues-slip-and-the-pad-page-arrows) · [Hot cue countdown](#the-hot-cue-countdown-deck-info-boxes) · [Beat meter](#beat-meter) · [SHIFT combos](#shift-combos) · [Touch Cue](#touch-cue) · [Track Preview](#track-preview) · [Boot screen](#boot-screen)
 
 ## The MOD menu
 
@@ -12,6 +12,21 @@ Tap **MOD** at the top center of the screen. Tap anywhere outside the panel to c
 * **Tap a button** to use it. Buttons act when you lift your finger, so a drag never presses one by accident.
 * **Green** means on or current.
 * Settings marked "until reboot" in [08](08-controls.md#mod-menu) reset when the unit restarts.
+
+## Recording a set
+
+The master mix can be recorded to the SD card (or whatever is in **USB 2**). A library stick takes USB 1 and the SD card takes USB 2, so the two work together ([10](10-usb.md#sd-card-slot)).
+
+1. Put the card in and push it until it clicks. It shows as USB 2 in the Source screen.
+2. Tap **MOD**, drag the panel to the bottom, and tap **REC**. It turns red and reads **STOP**.
+3. To finish, tap **STOP**, then **YES**.
+
+The file is `PIONEER REC/REC001.WAV` on the card (a later recording takes the next free number), 16-bit stereo 44.1 kHz. rbp's own limit is 3 hours per file, and it wants roughly 32 MB free to start. The card does not need a rekordbox library.
+
+* **While recording the file is called `RECTMP.WAV`.** It becomes `REC001.WAV` when you stop, and the header then holds the right length.
+* **If REC says NO USB 2**, the card is not mounted: reseat it.
+* **Stop before you restart the player or the unit.** Ejecting USB 2 or tapping POWER in the MOD menu stops it for you. A restart from SSH or a power cut mid-recording leaves `RECTMP.WAV` behind, and its length header may be wrong.
+* Listen to a first recording to check the level.
 
 ## Memory cues: SLIP and the pad page arrows
 

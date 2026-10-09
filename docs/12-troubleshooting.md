@@ -33,6 +33,7 @@ Symptom → cause → fix.
 | USB stopped working after a restart, log ends `started pid … / stopped` | the launcher missed rbp (`ps w` on 5.x) and its cleanup stopped `usb-watch` | current `start-rb.sh` ([11](11-runtime-launcher.md#finding-processes-not-ps-w)). If `/dev/sda*` is gone, reboot |
 | Generic "USB1", 0 tracks after a restart | stale DeviceSQL guard/req locks | `rm -f /tmp/guard_LocalDBServer /tmp/req_LocalDBServer`, then re-notify ([10](10-usb.md)) |
 | Stick ejects after ~30 s | `edisksd.service` running | stop it in the launcher |
+| SD card never appears (no `/dev/mmcblk1`, `gpio-206` reads `lo` in `/sys/kernel/debug/gpio`) | the card-detect switch is not closed: card not fully seated | push it in to eject, pull it out, push it in until it clicks ([10](10-usb.md#sd-card-slot)) |
 
 ## Audio
 

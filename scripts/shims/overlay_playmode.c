@@ -13,7 +13,8 @@
  * Touch Cue on the deck overview waveforms while a deck plays), SKIP (SEARCH, LOOP SIZE:
  * what the SEARCH < > buttons do, applied by knobshim), INFO (OFF, ON: OFF leaves the two deck info boxes
  * to rbp), ROWS (SRC, KEY, CUE, LOOP: which rows of those boxes are shown, applied by knobshim), COUNT (BARS,
- * BEATS: the unit of the CUE row), TAGS (ON, OFF: My Tags in the track INFO panel), and POWER.
+ * BEATS: the unit of the CUE row), TAGS (ON, OFF: My Tags in the track INFO panel), REC (START, then STOP and
+ * a YES tap: records the master mix to USB 2, see rec_start), and POWER.
  * POWER always stays the last row.
  * The MODE button cycles those four play modes. EJECT asks usb-watch to
  * release the stick; the button then reads PULL until the stick is removed.
@@ -84,6 +85,15 @@
 #define K_SEARCH          0x0205
 #define K_TAGTRACK        0x420e
 #define KEY_TAP_MS        80
+/* REC. rbp's own REC key (0x0401, MasterInnards::onEv_Rec) only records to a USB 2 whose rekordbox database is
+ * attached, so a plain SD card never gets a recording target. The row calls the engine's recorder instead, with
+ * the same calls rbp makes: MixerEngine::prepareRecording(path, usb1), startRecording, stopRecording. rbp writes
+ * <mount>/PIONEER REC/REC###.WAV; USB 2's mount is /media/usb4/sda1 inside the chroot. */
+#define REC_DIR           "/media/usb4/sda1/PIONEER REC"
+#define REC_WAIT_MS       3000
+#define ME_PREPARE_REC    ((void (*)(void *, const char *, int))0x00057744)
+#define ME_START_REC      ((void (*)(void *))0x00057754)
+#define ME_STOP_REC       ((void (*)(void *))0x000577d4)
 #define CMN_BASE ((volatile unsigned char *)0x03253564)
 /* SetPlayInfo passes this per-deck pair (device, kind) into WaveDispColor. */
 #define DECK_WAVE ((volatile unsigned char *)0x0216b3c0)
@@ -105,11 +115,11 @@
 #define TAB_X ((1280 - TAB_W) / 2)
 #define TAB_Y 8
 
-/* Name on the left, value on the right. Eighteen rows under the MOD tab:
+/* Name on the left, value on the right. Nineteen rows under the MOD tab:
  * PAN_H = 2 * PAD + rows * ROW_H + (rows - 1) * ROW_GAP. The panel shows PAN_VIS_H of that and scrolls
  * (drag inside it) when PAN_H is taller. */
 #define PAN_W 348
-#define PAN_H 804
+#define PAN_H 848
 #define PAN_VIS_H (PAN_H < 800 - PAN_Y - 4 ? PAN_H : 800 - PAN_Y - 4)
 #define SCROLL_MAX (PAN_H - PAN_VIS_H)
 #define PAN_X ((1280 - PAN_W) / 2)
@@ -160,12 +170,14 @@
 #define CNT_Y  ROW_Y(15)
 /* POWER is always the last row; add new rows above it. */
 #define TAGROW_Y ROW_Y(16)
-#define PWR_Y  ROW_Y(17)
+#define REC_Y  ROW_Y(17)
+#define PWR_Y  ROW_Y(18)
 
 #define COL_TAB    0xff1c2128u
 #define COL_PANEL  0xff121418u
 #define COL_BTN    0xff2a3038u
 #define COL_ON     0xff1b7a3au
+#define COL_REC    0xffb02a2au
 #define COL_TEXT   0xfff2f2f2u
 #define COL_TITLE  0xffb7bdc6u
 #define COL_EDGE   0xff3a424cu
@@ -197,7 +209,7 @@ static int          ov_tcue = 1;      /* 1 ON, 0 OFF, for drawing */
 static int          ov_skip;          /* 1 = LOOP SIZE, 0 = SEARCH, for drawing */
 static unsigned     ov_info = INFO_DEF;   /* shm info_cfg with the default filled in, for drawing */
 static volatile int ov_track_seq;
-static volatile int ov_track_act;     /* 1 TAG, 2 TAGS, 3 FIND */
+static volatile int ov_track_act;     /* 1 TAG, 2 TAGS, 3 FIND, 4 REC start, 5 REC stop */
 static int          ov_track_seen;
 static volatile int ov_key_up;
 static unsigned long long ov_key_up_ms;
@@ -704,7 +716,7 @@ static void cpu_sample(void)
 }
 
 static int pull1, pull2;
-/* 0 = idle. 1 or 2 = that slot is waiting for the YES tap. */
+/* 0 = idle. 1 or 2 = that slot is waiting for the YES tap. 3 = REC is waiting for the YES tap that stops it. */
 static int eject_arm;
 static int power_arm;
 
@@ -752,10 +764,15 @@ static unsigned hash_string(unsigned h, const char *s)
     return hash_bytes(h, s, (unsigned)strlen(s) + 1);
 }
 
+static void rec_stop(void);
+
 static void eject_request(int slot)
 {
     const char *path = (slot == 1) ? "/tmp/usb-eject-1" : "/tmp/usb-eject-2";
-    int fd = open(path, O_WRONLY | O_CREAT | O_TRUNC, 0666);
+    int fd;
+    if (slot == 2)                       /* the recording goes to USB 2: close the file before the unmount */
+        rec_stop();
+    fd = open(path, O_WRONLY | O_CREAT | O_TRUNC, 0666);
     if (fd >= 0) {
         (void)write(fd, "1\n", 2);
         close(fd);
@@ -765,7 +782,9 @@ static void eject_request(int slot)
 
 static void power_request(void)
 {
-    int fd = open(POWER_REQ, O_WRONLY | O_CREAT | O_TRUNC, 0666);
+    int fd;
+    rec_stop();                          /* close the recording before the launcher unmounts the card */
+    fd = open(POWER_REQ, O_WRONLY | O_CREAT | O_TRUNC, 0666);
     if (fd >= 0)
         close(fd);
     olog("overlay: poweroff\n");
@@ -1122,6 +1141,61 @@ static void request_track(int act)
     ov_track_seq++;
 }
 
+/* The recorder is the WavWriter at MixerEngine+84. Byte +149 is set once prepareRecording has accepted the
+ * directory (it exists and has room), byte +156 while a recording runs. */
+static unsigned char *rec_writer(void)
+{
+    void *me = *(void **)ME_SINGLETON;
+    return me ? *(unsigned char **)((char *)me + 84) : NULL;
+}
+
+static int rec_on(void)
+{
+    unsigned char *ww = rec_writer();
+    return ww && ww[156];
+}
+
+static unsigned long long rec_wait_ms;   /* nonzero: prepareRecording sent, start once the recorder is ready */
+static const char *rec_msg;              /* why the last START did nothing, shown on the button */
+
+static void rec_start(void)
+{
+    unsigned char *ww = rec_writer();
+    rec_msg = NULL;
+    if (!ww || ww[156])
+        return;
+    if (!file_exists(USB_NAME2)) {
+        rec_msg = "NO USB 2";
+        return;
+    }
+    mkdir(REC_DIR, 0777);
+    ww[149] = 0;                         /* wait for this prepare's answer, not an older one */
+    ME_PREPARE_REC(*(void **)ME_SINGLETON, REC_DIR, 0);
+    rec_wait_ms = mono_ms() + REC_WAIT_MS;
+}
+
+/* Every paint: start once the recorder has accepted the directory. */
+static void rec_poll(void)
+{
+    unsigned char *ww;
+    if (!rec_wait_ms)
+        return;
+    ww = rec_writer();
+    if (ww && ww[149]) {
+        rec_wait_ms = 0;
+        ME_START_REC(*(void **)ME_SINGLETON);
+    } else if (mono_ms() > rec_wait_ms) {
+        rec_wait_ms = 0;
+        rec_msg = "NOT READY";
+    }
+}
+
+static void rec_stop(void)
+{
+    if (rec_on())
+        ME_STOP_REC(*(void **)ME_SINGLETON);
+}
+
 static void apply_track(void)
 {
     int seq = ov_track_seq;
@@ -1137,8 +1211,14 @@ static void apply_track(void)
         tap_key(K_TAGLIST);
     else if (act == 3)
         tap_key(K_SEARCH);
+    else if (act == 4)
+        rec_start();
+    else if (act == 5)
+        rec_stop();
     olog(act == 1 ? "overlay: TAG\n" :
-         act == 2 ? "overlay: TAGS\n" : "overlay: FIND\n");
+         act == 2 ? "overlay: TAGS\n" :
+         act == 3 ? "overlay: FIND\n" :
+         act == 4 ? "overlay: REC start\n" : "overlay: REC stop\n");
 }
 
 /* Beat meter. rbp's own beat cue is the small red bar tick over each
@@ -2378,6 +2458,7 @@ void overlay_paint(int fb_fd, unsigned yoffset)
     int jog;
     int fps;
     int scr = 0, led = 0, cpu = -1;
+    int rec = 0;
     int beat;
     char label[24];
     char name1[32];
@@ -2394,7 +2475,10 @@ void overlay_paint(int fb_fd, unsigned yoffset)
     ov_skip = ov_shm && ov_shm->skip_mode == SKIP_BEATS;
     ov_info = ov_shm && (ov_shm->info_cfg & INFO_SET) ? ov_shm->info_cfg : INFO_DEF;
     apply_track();
+    rec_poll();
     open = ov_is_open();
+    if (!open)
+        rec_msg = NULL;
     if (open) {
         refresh_mode();
         refresh_quant();
@@ -2412,6 +2496,9 @@ void overlay_paint(int fb_fd, unsigned yoffset)
         led = led_pct();
         cpu_sample();
         cpu = cpu_pct_v;
+        rec = rec_on();
+        if (!rec && eject_arm == 3)        /* recording ended: nothing left to confirm */
+            eject_arm = 0;
     }
     pull1 = 0;
     pull2 = 0;
@@ -2453,6 +2540,8 @@ void overlay_paint(int fb_fd, unsigned yoffset)
     hash = hash_bytes(hash, &scr, sizeof(scr));
     hash = hash_bytes(hash, &led, sizeof(led));
     hash = hash_bytes(hash, &cpu, sizeof(cpu));
+    hash = hash_bytes(hash, &rec, sizeof(rec));
+    hash = hash_bytes(hash, &rec_msg, sizeof(rec_msg));
     hash = hash_bytes(hash, &ov_wave_cur, sizeof(ov_wave_cur));
     hash = hash_bytes(hash, ov_quant, sizeof(ov_quant));
     hash = hash_bytes(hash, &ov_link, sizeof(ov_link));
@@ -2586,6 +2675,11 @@ void overlay_paint(int fb_fd, unsigned yoffset)
     fill_visual(base, QUANT_OFF_X, SKIP_Y, QUANT_HALF, ROW_H, ov_skip ? COL_ON : COL_BTN);
     draw_text_centered(base, QUANT_OFF_X, SKIP_Y, QUANT_HALF, ROW_H, "LOOP SIZE", COL_TEXT);
 
+    draw_label(base, REC_Y, "REC");
+    fill_visual(base, VAL_X, REC_Y, VAL_W, ROW_H, rec ? COL_REC : COL_BTN);
+    draw_text_centered(base, VAL_X, REC_Y, VAL_W, ROW_H,
+                       !rec ? (rec_msg ? rec_msg : "START") : eject_arm == 3 ? "YES" : "STOP", COL_TEXT);
+
     {
         int pw = PAN_W - 12;
         int th = 7 * SCALE;
@@ -2657,7 +2751,7 @@ int overlay_touch(int down, int was_down, int lx, int ly)
     int vx = 1279 - lx;
     int vy = ly;
     int on_tab, on_panel, on_mode, on_jog_dn, on_jog_up;
-    int on_usb1, on_usb2, on_blue, on_rgb, on_band, on_quant_on, on_quant_off, on_power;
+    int on_usb1, on_usb2, on_blue, on_rgb, on_band, on_quant_on, on_quant_off, on_power, on_rec;
     int on_tag, on_tags, on_find, on_link_on, on_link_off, on_tcue_on, on_tcue_off, on_skip_srch, on_skip_beats;
     int on_beat_off, on_beat_bars, on_beat_drift;
     int on_scr_dn, on_scr_up, on_led_dn, on_led_up, on_cnt_bars, on_cnt_beats, on_info_off, on_info_on;
@@ -2752,6 +2846,7 @@ int overlay_touch(int down, int was_down, int lx, int ly)
         on_find = in_rect(vx, vy, WAVE_X + 2 * (WAVE_BTN + WAVE_GAP), TRACK_Y, WAVE_BTN, ROW_H);
         on_usb1 = in_rect(vx, vy, USB_L_X, USB_Y, USB_HALF, ROW_H);
         on_usb2 = in_rect(vx, vy, USB_R_X, USB_Y, USB_HALF, ROW_H);
+        on_rec = in_rect(vx, vy, VAL_X, REC_Y, VAL_W, ROW_H);
         on_power = in_rect(vx, vy, PAN_X + 6, PWR_Y, PAN_W - 12, ROW_H);
         on_scr_dn = in_rect(vx, vy, STEP_DN_X, SCR_Y, STEP_W, ROW_H);
         on_scr_up = in_rect(vx, vy, STEP_UP_X, SCR_Y, STEP_W, ROW_H);
@@ -2861,6 +2956,14 @@ int overlay_touch(int down, int was_down, int lx, int ly)
                     eject_arm = 0;
                 } else
                     eject_arm = 2;
+            } else if (on_rec) {
+                if (!rec_on())                  /* start at once; stopping takes a second tap */
+                    request_track(4);
+                else if (eject_arm == 3) {
+                    request_track(5);
+                    eject_arm = 0;
+                } else
+                    eject_arm = 3;
             } else if (on_power) {
                 if (power_arm)
                     power_request();

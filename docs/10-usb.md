@@ -32,6 +32,41 @@ stick (usb1, 1-1) → sda/sda1
   library → USB 1 appears in Source / Browse
 ```
 
+## SD card slot
+
+The SD slot is mmc host 1 (`ff0c0000.dwmmc`), and a card in it enumerates as
+`/dev/mmcblk1` with partitions `mmcblk1p1`, … (a `p` before the number). It is
+not on a USB bus, so `usb-watch.sh` also lists any `mmcblk*` whose
+`/sys/block/<dev>/device/type` is `SD`. The internal eMMC (`mmcblk0`, the `/data`
+and rootfs disk) reports `MMC` and is never picked up.
+
+An SD card is attached like a stick, with one rule: it takes **USB 2** (USB 1 if
+USB 2 is busy), and a USB stick takes USB 1 (USB 2 if USB 1 is busy). A library
+stick plus an SD card always show as USB 1 and USB 2, whatever order you put them
+in. The unit has only two slots, so with an SD card in, one USB stick at a time.
+The MOD eject buttons, the power-off release, and removal handling work the same
+as for a stick.
+
+rbp records a set to `<mount>/PIONEER REC/REC###.WAV`, and only ever to **USB 2**:
+its REC key goes through the USB 2 slot manager, which has to be in the "database
+attached" state. That needs a rekordbox `export.pdb`, so on a plain SD card the
+key does nothing. The MOD **REC** row therefore calls the recorder itself
+([14](14-using-the-extras.md#recording-a-set)), and the watcher's job is to keep
+the card mounted at `/media/usb4/sda1` as USB 2.
+exFAT (what SDXC cards ship with) mounts read-write with the kernel's `exfat`
+driver; vfat and HFS+ use the same branches as sticks. The card does not need a
+rekordbox library: with no `PIONEER/rekordbox/export.pdb` the watcher sends rbp
+one `umount` / `mount` pair and moves on, instead of re-mounting every 8 s while
+it waits for a library that never comes (that would stall the watcher and could
+cut a recording).
+
+If a card in the slot does not appear at all, check
+`grep 'gpio-206' /sys/kernel/debug/gpio` and `dmesg | grep mmc1`. `gpio-206` is
+the card-detect line: `lo` means the kernel thinks the slot is empty and it never
+powers the card, so there is no `mmcblk1` for the watcher to find. A card that is
+not pushed in until it clicks does that. Eject it with a push, pull it out, and
+push it back in; `mmc1: new SDXC card` appears in `dmesg` when it is seen.
+
 ## Files
 
 * `scripts/device/usb-watch.sh` — hotplug watcher (SC Live 4 buses), shipped to
