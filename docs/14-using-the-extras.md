@@ -41,11 +41,12 @@ The countdown turns red in the last 16 beats (4 beats in BEATS mode). It shows `
 
 ## My Tags in the track INFO panel
 
-Open the track **INFO** panel (the **INFO** button, top right of the screen). The right half, where the artwork would be, lists the loaded track's **My Tags** (the tags you set in rekordbox). The tags are read from the stick, so they need the rekordbox export that includes tags.
+Open the track **INFO** panel (the **INFO** button, top right of the screen). The right half, where the artwork would be, lists **every My Tag** (the tags you set in rekordbox), grouped by category. The loaded track's tags are **orange**; the rest are grey. The tags are read from the stick, so they need the rekordbox export that includes tags.
 
 ![My Tags in the INFO panel](my-tags.png)
 
-* Turn it off with MOD row **TAGS** (OFF gives the area back to rbp).
+* **Turn it off or on** with the **TAGS ON / OFF** button at the top right of the list, or with MOD row **TAGS**. They are the same setting.
+* The MOD menu stays on top; the list moves to its right while it is open.
 * Tags are shown in capitals.
 * It follows deck 1's track (deck 2's if deck 1 is empty).
 

@@ -6,7 +6,7 @@ Differences from [erhan-/rblive4](https://github.com/erhan-/rblive4), forked at 
 
 ### My Tags in the track INFO panel
 
-* **The INFO panel lists the loaded track's My Tags** in its right half (where the artwork would be), read from the stick's `exportExt.pdb`. New MOD row **TAGS** (default ON) turns it off. Shown in capitals, up to 14 tags. See [docs/08 — My Tags](docs/08-controls.md#my-tags-in-the-info-panel).
+* **The INFO panel lists every My Tag, with the loaded track's in orange,** in its right half (where the artwork would be), read from the stick's `exportExt.pdb`. A **TAGS ON / OFF** button at the top of the list and MOD row **TAGS** (default ON) switch it. The list is painted once per change instead of every frame, so it no longer flickers against the MOD menu, which stays on top. Shown in capitals. See [docs/08 — My Tags](docs/08-controls.md#my-tags-in-the-info-panel).
 
 ### SEARCH < > beat-jump by the loop size
 
