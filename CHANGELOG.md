@@ -4,6 +4,10 @@ Differences from [erhan-/rblive4](https://github.com/erhan-/rblive4), forked at 
 
 ## 2026-10-09
 
+### SEARCH < > beat-jump by the loop size
+
+* **MOD SKIP is now SEARCH or LOOP SIZE** (was SEARCH or 16 BEATS). With LOOP SIZE, SEARCH `<` `>` jump back / forward by the size the deck's loop encoder is set to: 128, 64, 32, 16, 8, 4, 2 or 1 beats (1/2 beat for smaller sizes). rbp's beat jump stops at 16, so 32 to 128 repeat it. See [docs/14](docs/14-using-the-extras.md#beat-jump-on-search--).
+
 ### Memory cues on the deck buttons
 
 * **SLIP stores a memory cue** at the playhead, using rbp's own CueMemory key, so it is saved to the stick like the RX3's MEMORY button. SHIFT + SLIP is slip mode as before.

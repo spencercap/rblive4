@@ -28,7 +28,7 @@ struct rb_overlay_shm {
     /* Touch Cue on the deck overview waveforms, applied by knobshim2.
      * 0 = not set yet = ON, 1 = ON, 2 = OFF. */
     volatile int tcue_mode;
-    /* What the deck SEARCH < > buttons do: 0 = not set yet = SEARCH (scan), 1 = SEARCH, 2 = jump 16 beats.
+    /* What the deck SEARCH < > buttons do: 0 = not set yet = SEARCH (scan), 1 = SEARCH, 2 = beat-jump by the loop size.
      */
     volatile int skip_mode;
     /* What the two deck info boxes left of the waveforms show (INFO_*). 0 = not set yet = INFO_DEF.

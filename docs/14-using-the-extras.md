@@ -55,7 +55,14 @@ Hold **SHIFT** and:
 | the pad page **◄** | deletes the memory cue at the playhead |
 | **SLIP** | slip mode |
 
-MOD row **SKIP** turns the SEARCH `<` `>` buttons into a **16-beat jump**. Details: [08 — SHIFT](08-controls.md#shift).
+### Beat jump on SEARCH < >
+
+MOD row **SKIP** has two settings: **SEARCH** (the normal scan) and **LOOP SIZE**. With **LOOP SIZE**, each press of SEARCH `<` or `>` jumps the deck back or forward by the size the **loop encoder** is set to:
+
+1. Turn the deck's loop encoder to a size (for example 4, 16 or 64 beats). The loop does not have to be running.
+2. Press SEARCH `>` to jump forward that many beats, `<` to jump back.
+
+Sizes: 128, 64, 32, 16, 8, 4, 2, 1 beats. At 1/2 beat and smaller the jump is 1/2 a beat. Details: [08 — SHIFT](08-controls.md#shift).
 
 ## Touch Cue
 

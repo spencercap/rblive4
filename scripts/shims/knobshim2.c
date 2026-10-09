@@ -738,15 +738,37 @@ static void key_tap(int key)
 
 extern int rb_tcue_pad(int ch, int note, int on) __attribute__((weak));   /* overlay_playmode.c */
 
+static int g_aloop_idx[2];             /* the beat-loop encoder's size, defined below */
+
+/* MOD SKIP = LOOP SIZE: jump the beat-loop encoder's size (128 ... 1/32 beats) back or forward.  rbp's beat
+ * jump types go 1/2 .. 16 beats (type 1 = back 1/2, then back / forward pairs of 1, 2, 4, 8, 16), so smaller
+ * sizes use 1/2 and larger ones repeat the 16. */
+static void skip_jump(int deck, int fwd)
+{
+     static const unsigned char beats[13] = { 128, 64, 32, 16, 8, 4, 2, 1, 0, 0, 0, 0, 0 };   /* 0 = 1/2 or less */
+     int idx = g_aloop_idx[deck] < 0 ? 3 : g_aloop_idx[deck], n = beats[idx], reps = 1, type = 1, k;
+     if (n > 16) {
+          type = 11;
+          reps = n / 16;
+     } else if (n)
+          for (type = 3, k = n; k > 1; k >>= 1)
+               type += 2;
+     for (k = 0; k < reps; k++) {
+          if (k)
+               usleep(40000);        /* a jump issued while the last is still landing can be dropped */
+          ((void (*)(void *, int, int))0x00049ae0)(NULL, deck, type + fwd);
+     }
+}
+
 static void handle_note(int ch, int note, int on)
 {
-     /* MOD SKIP = 16 BEATS: the SEARCH < > buttons (notes 6 and 7) jump 16 beats instead of scanning. */
+     /* MOD SKIP = LOOP SIZE: the SEARCH < > buttons (notes 6 and 7) beat-jump by the loop size instead of scanning. */
      if ((ch == 4 || ch == 5) && (note == 6 || note == 7)) {
           if (!jog_ov)
                jog_ov_load();
           if (jog_ov && jog_ov->skip_mode == SKIP_BEATS) {
-               if (on)   /* DjEngineIF::playBeatJump(ch, type): 11 = back 16 beats, 12 = forward 16 */
-                    ((void (*)(void *, int, int))0x00049ae0)(NULL, ch - 4, note == 7 ? 12 : 11);
+               if (on)
+                    skip_jump(ch - 4, note == 7);
                return;
           }
      }

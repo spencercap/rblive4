@@ -10,7 +10,7 @@
  * percent +, applied by knobshim), EJECT, STATS (read-only: CPU load percent
  * and display frames per second, counted at each FBIOPAN), LINK (ON, OFF:
  * LINK CUE, which lets Track Preview play into the headphones), TCUE (ON, OFF:
- * Touch Cue on the deck overview waveforms while a deck plays), SKIP (SEARCH, 16 BEATS:
+ * Touch Cue on the deck overview waveforms while a deck plays), SKIP (SEARCH, LOOP SIZE:
  * what the SEARCH < > buttons do, applied by knobshim), INFO (OFF, ON: OFF leaves the two deck info boxes
  * to rbp), ROWS (SRC, KEY, CUE, LOOP: which rows of those boxes are shown, applied by knobshim), COUNT (BARS,
  * BEATS: the unit of the CUE row), and POWER.
@@ -192,7 +192,7 @@ static int          ov_link_seen;
 static int          ov_link = 1;      /* 1 ON, 0 OFF, for drawing */
 static unsigned long long ov_link_ms;
 static int          ov_tcue = 1;      /* 1 ON, 0 OFF, for drawing */
-static int          ov_skip;          /* 1 = 16 BEATS, 0 = SEARCH, for drawing */
+static int          ov_skip;          /* 1 = LOOP SIZE, 0 = SEARCH, for drawing */
 static unsigned     ov_info = INFO_DEF;   /* shm info_cfg with the default filled in, for drawing */
 static volatile int ov_track_seq;
 static volatile int ov_track_act;     /* 1 TAG, 2 TAGS, 3 FIND */
@@ -2009,7 +2009,7 @@ void overlay_paint(int fb_fd, unsigned yoffset)
     fill_visual(base, QUANT_ON_X, SKIP_Y, QUANT_HALF, ROW_H, !ov_skip ? COL_ON : COL_BTN);
     draw_text_centered(base, QUANT_ON_X, SKIP_Y, QUANT_HALF, ROW_H, "SEARCH", COL_TEXT);
     fill_visual(base, QUANT_OFF_X, SKIP_Y, QUANT_HALF, ROW_H, ov_skip ? COL_ON : COL_BTN);
-    draw_text_centered(base, QUANT_OFF_X, SKIP_Y, QUANT_HALF, ROW_H, "16 BEATS", COL_TEXT);
+    draw_text_centered(base, QUANT_OFF_X, SKIP_Y, QUANT_HALF, ROW_H, "LOOP SIZE", COL_TEXT);
 
     {
         int pw = PAN_W - 12;

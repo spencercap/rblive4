@@ -44,7 +44,7 @@ New in this fork, on top of the port. **How to use each one: [docs/14 — Using 
 | Hot cue countdown | the deck info box counts to the next hot cue, in bars or beats | [use](docs/14-using-the-extras.md#the-hot-cue-countdown-deck-info-boxes) · [ref](docs/06-display.md#deck-info-panel) |
 | Deck info rows | show or hide source, key, countdown and loop size; **INFO OFF** restores stock rbp | [use](docs/14-using-the-extras.md#the-hot-cue-countdown-deck-info-boxes) · [ref](docs/06-display.md#deck-info-panel) |
 | Beat meter | per-deck bar position or drift between decks, in the top bar | [use](docs/14-using-the-extras.md#beat-meter) · [ref](docs/08-controls.md#beat-meter) |
-| SHIFT combos | SHIFT + pad deletes a hot cue, SHIFT + jog searches, SEARCH `<` `>` can jump 16 beats | [use](docs/14-using-the-extras.md#shift-combos) · [ref](docs/08-controls.md#shift) |
+| SHIFT combos | SHIFT + pad deletes a hot cue, SHIFT + jog searches, SEARCH `<` `>` can beat-jump by the loop size | [use](docs/14-using-the-extras.md#shift-combos) · [ref](docs/08-controls.md#shift) |
 | Touch Cue | touch a playing deck's overview to hear that point in the headphones, set a hot cue from a pad | [use](docs/14-using-the-extras.md#touch-cue) · [ref](docs/08-controls.md#touch-cue) |
 | Track Preview | touch a browse row's mini waveform to audition it, with a playhead | [use](docs/14-using-the-extras.md#track-preview) · [ref](docs/08-controls.md#track-preview) |
 | 60 fps display | locked 60 fps (was about 15), with an FPS readout in the MOD panel | [ref](docs/06-display.md#frame-rate) |
