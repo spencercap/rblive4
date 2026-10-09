@@ -4,6 +4,10 @@ Differences from [erhan-/rblive4](https://github.com/erhan-/rblive4), forked at 
 
 ## 2026-10-09
 
+### Boot screen
+
+* **The launcher paints a logo while rbp starts.** Before, the panel kept the last frame (Engine's, or the old rbp's) for several seconds. After it kills the old processes, `start-rb.sh` now writes `/data/splash.raw.gz` to all three fb0 pages; rbp's first frame replaces it. No file, or an fb0 that is not 32 bpp, and it is skipped. `tools/make-splash.py` builds the file from any image. See [docs/11 — Boot screen](docs/11-runtime-launcher.md#boot-screen).
+
 ### My Tags in the track INFO panel
 
 * **The tag list stays on top of rbp's scrolling comment line and the "TRACK n/m" text.** The overlay now reads back one pixel in every 32 px tile of the list each frame and paints again only the tile rows rbp has drawn over (it used to sample 12 pixels, none on the comment row).

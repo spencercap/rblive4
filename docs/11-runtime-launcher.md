@@ -7,7 +7,7 @@ and is the normal way to bring up the player.
 
 1. `systemctl stop engine.service edisksd.service` — `engine` owns the display/
    audio/MIDI; `edisksd` will bus-reset a USB drive it doesn't manage.
-2. Kill stale `rbp`/`edb_streamd`.
+2. Kill stale `rbp`/`edb_streamd`, then paint the [boot screen](#boot-screen).
 3. `sh /data/fix-dev.sh` — bind mounts + device stubs.
 4. Copy `rbp-audio` + the shims into the chroot.
 5. `rm -f /tmp/guard_LocalDBServer /tmp/req_LocalDBServer` — clear stale
@@ -30,6 +30,17 @@ chroot /data/rbx3-run env \
 * `knobshim.so` **before** `audioshim.so` so the shared `g_speaker_gain` data
   symbol resolves.
 * the speaker/booth level is fixed via `SPEAKER_GAIN` (see [09](09-audio.md)).
+
+## Boot screen
+
+Until rbp draws its first frame (about 3 to 4 seconds after the old one is killed) the panel would keep whatever was on it last: Engine's final frame, or the frozen old rbp. After step 2 the launcher paints a logo instead.
+
+![The boot screen](boot-screen.png)
+
+* **What is painted.** `/data/splash.raw.gz` is one fb0 page as the panel stores it (800×1280, 32 bpp BGRA, the screen turned a quarter, see [06](06-display.md)), gzipped (about 40 KB). The launcher writes it to all three pages of `/dev/fb0` (`virtual_size` 800,3840), so it shows whichever page is displayed. rbp's first frame replaces it, tile by tile.
+* **Why after the kill.** The old rbp and the overlay keep redrawing parts of the screen (the BEATS labels, the deck 2 box, the meters) until they are killed, and they painted over the logo when it was drawn earlier.
+* **Skipped when it cannot be right.** No `/data/splash.raw.gz`, or `/sys/class/graphics/fb0` is not 32 bpp with a stride of 3200: the screen is left as it was. To turn the boot screen off, delete `/data/splash.raw.gz`.
+* **Making your own.** `python3 tools/make-splash.py LOGO.png OUT_DIR` fits any image on a black 1280×800 screen (nearly black pixels become pure black, the margin is trimmed, the logo is 1000 px wide) and writes `splash.png` (the preview, kept in [`scripts/device/`](../scripts/device/)) and `splash.raw.gz`. Copy that to `/data/splash.raw.gz` and restart the launcher.
 
 ## Finding processes: not `ps w`
 

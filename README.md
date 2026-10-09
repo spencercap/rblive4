@@ -48,6 +48,7 @@ New in this fork, on top of the port. **How to use each one: [docs/14 — Using 
 | SHIFT combos | SHIFT + pad deletes a hot cue, SHIFT + jog searches, SEARCH `<` `>` can beat-jump by the loop size | [use](docs/14-using-the-extras.md#shift-combos) · [ref](docs/08-controls.md#shift) |
 | Touch Cue | touch a playing deck's overview to hear that point in the headphones, set a hot cue from a pad | [use](docs/14-using-the-extras.md#touch-cue) · [ref](docs/08-controls.md#touch-cue) |
 | Track Preview | touch a browse row's mini waveform to audition it, with a playhead | [use](docs/14-using-the-extras.md#track-preview) · [ref](docs/08-controls.md#track-preview) |
+| Boot screen | a logo on the screen while the player starts, instead of the last frame frozen; your own picture via `tools/make-splash.py` | [use](docs/14-using-the-extras.md#boot-screen) · [ref](docs/11-runtime-launcher.md#boot-screen) |
 | 60 fps display | locked 60 fps (was about 15), with an FPS readout in the MOD panel | [ref](docs/06-display.md#frame-rate) |
 
 ## What it does

@@ -2,7 +2,7 @@
 
 A how-to for everything this fork adds on top of the stock port. Each item says what it does, how to use it on the unit, and where the details are. Nothing here needs SSH once the player is running.
 
-**Jump to:** [MOD menu](#the-mod-menu) · [My Tags](#my-tags-in-the-track-info-panel) · [Memory cues](#memory-cues-slip-and-the-pad-page-arrows) · [Hot cue countdown](#the-hot-cue-countdown-deck-info-boxes) · [Beat meter](#beat-meter) · [SHIFT combos](#shift-combos) · [Touch Cue](#touch-cue) · [Track Preview](#track-preview)
+**Jump to:** [MOD menu](#the-mod-menu) · [My Tags](#my-tags-in-the-track-info-panel) · [Memory cues](#memory-cues-slip-and-the-pad-page-arrows) · [Hot cue countdown](#the-hot-cue-countdown-deck-info-boxes) · [Beat meter](#beat-meter) · [SHIFT combos](#shift-combos) · [Touch Cue](#touch-cue) · [Track Preview](#track-preview) · [Boot screen](#boot-screen)
 
 ## The MOD menu
 
@@ -109,3 +109,15 @@ In the browse list, **touch a track's mini waveform** to hear it from that point
 * **Memory cues and hot cues are written to your stick**, as with any rekordbox player. SHIFT + ◄ removes a memory cue you did not mean to make; SHIFT + pad removes a hot cue.
 * **MOD menu settings last until reboot** unless the table in [08](08-controls.md#mod-menu) says otherwise.
 * If the screen ever looks wrong, set **INFO** to **OFF** and open and close the MOD panel to force a full redraw.
+
+## Boot screen
+
+When you start the launcher (or restart it), the screen shows a logo while the player starts, instead of freezing on the last frame, and then the player's own screen takes over.
+
+![The boot screen](boot-screen.png)
+
+* **Nothing to do:** it appears by itself every time `start-rb.sh` runs.
+* **Change the picture:** `python3 tools/make-splash.py your-logo.png` on your computer (white on black works best), copy the `splash.raw.gz` it writes to `/data/splash.raw.gz` on the unit, and start the launcher again.
+* **Turn it off:** delete `/data/splash.raw.gz`.
+
+Details: [11 — Boot screen](11-runtime-launcher.md#boot-screen).

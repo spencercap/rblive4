@@ -23,6 +23,16 @@ for p in $(procs | awk '$0 ~ /[s]trace|[r]oot\/pdj\/[r]bp|[e]db_streamd|[g]dbser
 done
 sleep 1
 
+# Boot screen: paint /data/splash.raw.gz (one 800x1280 BGRA page, made by tools/make-splash.py) on all three
+# fb0 pages, so it shows for the few seconds rbp takes to start. This is after the kill above, or the old rbp
+# would keep drawing over it. rbp's first frame replaces it. Left alone if the file is missing or fb0 is not
+# the 32 bpp panel.
+if [ -f /data/splash.raw.gz ] &&
+   [ "$(cat /sys/class/graphics/fb0/bits_per_pixel 2>/dev/null)" = 32 ] &&
+   [ "$(cat /sys/class/graphics/fb0/stride 2>/dev/null)" = 3200 ]; then
+    for p in 1 2 3; do zcat /data/splash.raw.gz; done | dd of=/dev/fb0 bs=64k 2>/dev/null
+fi
+
 # 3. Setup device binds, stubs, and FIFOs
 sh /data/fix-dev.sh
 
