@@ -2,6 +2,13 @@
 
 Differences from [erhan-/rblive4](https://github.com/erhan-/rblive4), forked at `6003702`.
 
+## 2026-10-09
+
+### Deck info panel
+
+* **The source row ("USB1") is blank.** It only said where the track came from.
+* **Bars counts down to the next hot cue (A–H) instead of the next memory cue.** rbp still draws it, with its own format and colours, and shows `--.-` when no hot cue is ahead. See [docs/06 — Deck info panel](docs/06-display.md#deck-info-panel).
+
 ## 2026-10-08
 
 ### Track Preview, Touch Cue, SHIFT and SEARCH, and two touch fixes

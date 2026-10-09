@@ -158,3 +158,22 @@ Each of these cost at least one refresh per frame:
   `drm_atomic_helper_wait_for_vblanks` is the pan, and it is expected.
   `drm_wait_one_vblank` is an extra `FBIO_WAITFORVSYNC`. `hrtimer_nanosleep`
   is a sleep, from rbp or a shim.
+
+## Deck info panel
+
+The two boxes left of the waveforms (DECK 1 and DECK 2) have four rows: the source, the key, a **Bars**
+countdown, and the loop size. `knobshim2` changes two of them. Both changes are always on.
+
+* **Source row is blank.** It showed where the track came from ("USB1"). `ui_Deck_Update` picks the
+  device icon from the media type and hides it when the deck has no media. The `bne` at `0x28fc14` that
+  leads to the icon is replaced with a no-op, so rbp always takes its own empty-deck path. The row's
+  background stays.
+* **Bars counts to the next hot cue (A–H), not the next memory cue.** rbp's
+  `CmnFunc_CmnInfo_GetLocalNowPlay_CountDownNum(deck)` (`0x184b10`) reads a sorted list of up to 10 memory
+  cue beat numbers per deck (at `0x0322ab70 + deck × 0x12fd8 + 0x10ef4`, `-1` ends it). rbp fills it on
+  track load and reads it nowhere else. A hook refills it before each call: hot cue IN times from
+  `UiGetHotCueINtime(deck, 0..7)` (ms, `-1` = empty), turned into beats with
+  `DJcont_searchBeatNo_forMemCue`, the same call rbp uses for memory cues. rbp's own code then does the
+  rest: the format (bars.beats), the colours, `--.-` past 400 beats or when no hot cue is ahead, and slip
+  mode. A hot cue that is set or deleted shows up on the next frame. The cost is up to 8 lookups per deck
+  per frame. `TotalCnt_SentinelTASK` reads the same value, so it changes there too.

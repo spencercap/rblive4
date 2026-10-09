@@ -2888,6 +2888,61 @@ static void install_preview_fixes(void)
           klog("knobshim2: preview hooks: unexpected prologue, some are off\n");
 }
 
+/* ---- Deck info panel, left of the waveforms (docs/06-display.md, "Deck info panel") -------------------- */
+#define ADDR_COUNTDOWN      0x00184b10UL  /* CmnFunc_CmnInfo_GetLocalNowPlay_CountDownNum(deck) */
+#define ADDR_HOTCUE_IN      0x000fd750UL  /* UiGetHotCueINtime(deck, pad 0..7), -1 = empty */
+#define ADDR_BEAT_NO        0x000e3850UL  /* DJcont_searchBeatNo_forMemCue(deck, ms), -1 = no grid */
+#define CUE_BEATS(d)        ((unsigned *)(0x0322ab70UL + (d) * 0x12fd8UL + 0x10ef4UL))
+#define ADDR_DEVICE_BNE     0x0028fc14UL  /* ui_Deck_Update: bne to the "media present" device icon */
+
+static unsigned (*g_countdown)(int);
+
+/* The Bars row counts beats to the next memory cue, read from a sorted list of up to 10 cue beats (-1 ends
+ * it) that rbp fills on track load and reads nowhere else.  Refill it with hot cues A-H before each read. */
+static unsigned countdown_hook(int deck)
+{
+     unsigned *a = CUE_BEATS(deck), b[8], v;
+     int i, j, n = 0, t;
+     if (!g_countdown)                  /* rbp calls this every frame; the hook is live just before this is set */
+          return 511;                   /* rbp's "no count" (--.-) */
+     if ((unsigned)deck > 1)
+          return g_countdown(deck);
+     for (i = 0; i < 8; i++) {
+          t = ((int (*)(int, int))ADDR_HOTCUE_IN)(deck, i);
+          if (t == -1 || (v = ((unsigned (*)(int, int))ADDR_BEAT_NO)(deck, t)) == ~0u)
+               continue;
+          for (j = n++; j > 0 && b[j - 1] > v; j--)
+               b[j] = b[j - 1];
+          b[j] = v;
+     }
+     for (i = 0; i < 10; i++)
+          a[i] = i < n ? b[i] : ~0u;
+     return g_countdown(deck);
+}
+
+/* Replace one instruction word, if it still holds w0. */
+static int patch_word(unsigned long addr, unsigned w0, unsigned w)
+{
+     unsigned long pg = addr & ~4095UL;
+     if (*(volatile uint32_t *)addr != w0 || mprotect((void *)pg, 4096, PROT_READ | PROT_WRITE | PROT_EXEC) != 0)
+          return 0;
+     *(uint32_t *)addr = w;
+     mprotect((void *)pg, 4096, PROT_READ | PROT_EXEC);
+     __builtin___clear_cache((char *)addr, (char *)addr + 4);
+     return 1;
+}
+
+static void install_deck_panel(void)
+{
+     if (!is_rbp_process())
+          return;
+     /* The device row shows the source ("USB1").  Always take rbp's own empty-deck path, which hides it. */
+     int ok = patch_word(ADDR_DEVICE_BNE, 0x1a000295u, 0xe1a00000u);
+     g_countdown = hook_function(ADDR_COUNTDOWN, 0xe92d40f8u, 0xe0801080u, countdown_hook);
+     if (!ok || !g_countdown)
+          klog("knobshim2: deck panel: unexpected code, some changes are off\n");
+}
+
 unsigned int getled_hook(void *self, unsigned char level)
 {
      void *lr = __builtin_return_address(0);
@@ -3006,6 +3061,7 @@ static void *vu_thread(void *arg)
           return NULL;
      install_meter_hook();
      install_preview_fixes();
+     install_deck_panel();
      /* Ask for the physical control positions only once rbp can accept them:
       * if the reply lands before rbp's mixer exists, the values are dropped and
       * rbp initialises the faders/EQs to their defaults (the fader then reads
