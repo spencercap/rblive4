@@ -1858,41 +1858,149 @@ static int tags_touch(int down, int fresh, int vx, int vy)
     return 1;
 }
 
-/* rbp redraws this area when the panel changes (a new track, the other deck, opening it): that wipes our pixels
- * without any change of ours.  A few pixels read back after each paint tell when that has happened. */
-#define TG_NS 12
-static unsigned tg_expect[3][TG_NS];
-static const short tg_sx[4] = { 850, 1000, 1150, 1255 }, tg_sy[3] = { 120, 260, 400 };
+/* rbp redraws parts of this area while the panel is open: the comment row scrolls every frame, the "TRACK n/m"
+ * text changes with the track, and the whole panel redraws when the deck changes or it opens.  Each redraw wipes
+ * our pixels without any change of ours (the driver rewrites the 32 px tiles whose source changed), so the area
+ * is checked every frame by reading back a grid of pixels per tile row, and a row that no longer matches what we
+ * painted is painted again, on top. */
+/* One pixel per 32 px tile (the driver rewrites whole tiles, so one pixel tells whether rbp redrew its tile). */
+#define TG_R0 (TAGS_Y / 32)
+#define TG_NY ((TAGS_Y + TAGS_H - 1) / 32 - TG_R0 + 1)
+#define TG_NXMAX (TAGS_W / 32 + 2)
+static unsigned tg_expect[3][TG_NY][TG_NXMAX];
+static int tg_tc0, tg_nx, tg_xlo, tg_xhi;      /* the tile columns of the area being checked */
 
-static unsigned tg_sample(const unsigned char *base, int i)
+static void tg_geometry(int x0, int w)
 {
-    return *((const unsigned *)(base + (unsigned)(1279 - tg_sx[i % 4]) * fb_pitch) + tg_sy[i / 4]);
+    tg_tc0 = x0 / 32;
+    tg_nx = (x0 + w - 1) / 32 - tg_tc0 + 1;
+    tg_xlo = x0 + 2;
+    tg_xhi = x0 + w - 3;
 }
 
-static void tg_remember(const unsigned char *base, int page)
+static unsigned *tg_px(unsigned char *base, int k, int i)
 {
-    int i;
-    for (i = 0; i < TG_NS; i++)
-        tg_expect[page][i] = tg_sample(base, i);
+    int x = (tg_tc0 + i) * 32 + 16, y = (TG_R0 + k) * 32 + 16;
+    if (x < tg_xlo)
+        x = tg_xlo;
+    if (x > tg_xhi)
+        x = tg_xhi;
+    if (y < TAGS_Y + 2)
+        y = TAGS_Y + 2;
+    return (unsigned *)(base + (unsigned)(1279 - x) * fb_pitch) + y;
 }
 
-static int tg_intact(const unsigned char *base, int page)
+/* rbp's pixels are RGB565 widened to 32 bits, so their low bits repeat the high ones.  A pixel of ours that
+ * is also such a colour (the panel background is) would read the same after rbp redrew its tile and the
+ * redraw would go unseen; one low bit off cannot be anything rbp draws. */
+static unsigned tg_mark(unsigned c)
 {
-    int i;
-    for (i = 0; i < TG_NS; i++)
-        if (tg_expect[page][i] != tg_sample(base, i))
-            return 0;
-    return 1;
+    unsigned r = (c >> 16) & 0xff, g = (c >> 8) & 0xff, b = c & 0xff;
+    if ((r & 7) == (r >> 5) && (g & 3) == (g >> 6) && (b & 7) == (b >> 5))
+        c ^= 0x010101;
+    return c;
 }
 
-/* Paint once per fb page and change; the driver leaves our pixels alone while rbp's do not change.  ov_repaint
- * covers the full redraws that kick_redraw forces. */
+/* Mark and remember what is painted in the tile rows that overlap [ya, yb). */
+static void tg_remember(unsigned char *base, int page, int ya, int yb)
+{
+    int k, i;
+    for (k = 0; k < TG_NY; k++) {
+        int ts = (TG_R0 + k) * 32;
+        if (ts + 32 <= ya || ts >= yb)
+            continue;
+        for (i = 0; i < tg_nx; i++) {
+            unsigned *p = tg_px(base, k, i);
+            *p = tg_mark(*p);
+            tg_expect[page][k][i] = *p;
+        }
+    }
+}
+
+/* The span of tile rows whose pixels are no longer ours; 0 when all are. */
+static int tg_dirty(unsigned char *base, int page, int *ya, int *yb)
+{
+    int k, i, any = 0;
+    for (k = 0; k < TG_NY; k++)
+        for (i = 0; i < tg_nx; i++)
+            if (tg_expect[page][k][i] != *tg_px(base, k, i)) {
+                int ts = (TG_R0 + k) * 32;
+                if (!any || ts < *ya)
+                    *ya = ts;
+                if (!any || ts + 32 > *yb)
+                    *yb = ts + 32;
+                any = 1;
+                break;
+            }
+    return any;
+}
+
+/* Paint the list (or any part of it, the rows [ya, yb) of the screen). */
+static void tags_render(unsigned char *base, int x0, int w, int ya, int yb, int max, unsigned pend, unsigned err)
+{
+    int i, lo, hi;
+    if (ya < TAGS_Y)
+        ya = TAGS_Y;
+    if (yb > TAGS_Y + TAGS_H)
+        yb = TAGS_Y + TAGS_H;
+    clip_y0 = ya;
+    clip_y1 = yb;
+    fill_visual(base, x0, TAGS_Y, w, TAGS_H, COL_INFO_BG);
+    draw_text(base, x0 + TG_PAD, TAGS_Y + 18, "MY TAGS", COL_TITLE);
+    if (pend)
+        draw_text(base, x0 + TG_PAD + 110, TAGS_Y + 18, "SAVING", COL_TAG_ON);
+    else if (err)
+        draw_text(base, x0 + TG_PAD + 110, TAGS_Y + 18, "NOT SAVED", 0xffff4d4du);
+    fill_visual(base, TOG_X, TOG_Y, TOG_W, TOG_H, COL_ON);
+    draw_text_centered(base, TOG_X, TOG_Y, TOG_W, TOG_H, "TAGS ON", COL_TEXT);
+    fill_visual(base, x0 + TG_PAD, TAGS_Y + 46, w - 2 * TG_PAD, 2, COL_EDGE);
+    if (!tag_lines) {
+        draw_text(base, x0 + TG_PAD, TG_VIEW_Y + 16, "NO TAGS ON THIS STICK", COL_TAG_OFF);
+        clip_y0 = 0;
+        clip_y1 = 800;
+        return;
+    }
+    lo = ya > TG_VIEW_Y ? ya : TG_VIEW_Y;
+    hi = yb < TG_VIEW_Y + TG_VIEW_H ? yb : TG_VIEW_Y + TG_VIEW_H;
+    clip_y0 = lo;
+    clip_y1 = hi;
+    for (i = 0; i < tag_lines && lo < hi; i++) {
+        const struct tagrec *r = &tag_rec[tag_line[i]];
+        int x, y, bw, bh, j, on;
+        char name[TAG_LEN];
+        tags_line_rect(i, w, &x, &y, &bw, &bh);
+        x += x0;
+        y += TG_VIEW_Y - tg_scroll;
+        if (y + bh <= lo || y >= hi)
+            continue;
+        for (j = 0; r->name[j] && j < TAG_LEN - 1; j++)
+            name[j] = r->name[j] >= 'a' && r->name[j] <= 'z' ? r->name[j] - 32 : r->name[j];
+        name[j] = 0;
+        if (r->cat_row) {
+            draw_text(base, x, y + (bh - 14) / 2, name, COL_TITLE);
+            fill_visual(base, x, y + bh - 2, bw, 2, COL_EDGE);
+            continue;
+        }
+        on = tag_is_active(r->id);
+        fill_visual(base, x, y, bw, bh, on ? COL_TAG_BGON : COL_BTN);
+        if (on)
+            fill_visual(base, x, y, 5, bh, COL_TAG_ON);
+        draw_text_centered(base, x, y, bw, bh, name, on ? COL_TAG_ON : COL_TAG_OFF);
+    }
+    if (max > 0 && lo < hi)        /* where the view sits in the list */
+        fill_visual(base, x0 + w - 6, TG_VIEW_Y + tg_scroll * (TG_VIEW_H - 40) / max, 3, 40, COL_TITLE);
+    clip_y0 = 0;
+    clip_y1 = 800;
+}
+
+/* Paint once per fb page and change, and again wherever rbp has drawn over it since.  ov_repaint covers the
+ * full redraws that kick_redraw forces and the panel opening. */
 static void tags_paint(unsigned char *base, int page)
 {
     static unsigned last[3];
     static int last_stat_ms;
     unsigned c, h, tver, tn, pend, err;
-    int i, x0, w, open = ov_is_open(), now = (int)mono_ms(), lit, max;
+    int x0, w, open = ov_is_open(), now = (int)mono_ms(), lit, max, ya = 0, yb = 0;
     if (!ov_shm)
         return;
     c = ov_shm->info_cfg;
@@ -1919,13 +2027,13 @@ static void tags_paint(unsigned char *base, int page)
             tags_load(tn);
     }
     tags_area(&x0, &w);
+    tg_geometry(x0, w);
     max = tags_max_scroll(w);
     if (tg_scroll > max)
         tg_scroll = max;
     pend = ov_shm->tag_req_seq != ov_shm->tag_ack_seq;
     err = ov_shm->tag_ack_err;
     tver = ov_shm->info_tags_ver;
-    tn = tags_track();
     h = 2166136261u;
     h = hash_bytes(h, &tag_ver, sizeof(tag_ver));
     h = hash_bytes(h, &tver, sizeof(tver));
@@ -1936,10 +2044,15 @@ static void tags_paint(unsigned char *base, int page)
     h = hash_bytes(h, &err, sizeof(err));
     c &= INFO_NOTAGS;
     h = hash_bytes(h, &c, sizeof(c));
-    if (h == last[page] && !ov_repaint && (c || !tag_ok || tg_intact(base, page)))
-        return;
-    if (last[page] && h != last[page] && c)
-        kick_redraw();             /* switching the list off: give the area back */
+    if (h == last[page] && !ov_repaint) {
+        if (c || !tag_ok || !tg_dirty(base, page, &ya, &yb))
+            return;                /* nothing to do, or only rbp's redrawn rows to cover again */
+    } else {
+        if (last[page] && h != last[page] && c)
+            kick_redraw();         /* switching the list off: give the area back */
+        ya = TAGS_Y;
+        yb = TAGS_Y + TAGS_H;
+    }
     last[page] = h;
     if (c) {                       /* list off: just the button, over rbp's own artwork area */
         fill_visual(base, TOG_X, TOG_Y, TOG_W, TOG_H, COL_BTN);
@@ -1948,50 +2061,8 @@ static void tags_paint(unsigned char *base, int page)
     }
     if (!tag_ok)
         return;                    /* no tag file: leave the artwork */
-    fill_visual(base, x0, TAGS_Y, w, TAGS_H, COL_INFO_BG);
-    draw_text(base, x0 + TG_PAD, TAGS_Y + 18, "MY TAGS", COL_TITLE);
-    if (pend)
-        draw_text(base, x0 + TG_PAD + 110, TAGS_Y + 18, "SAVING", COL_TAG_ON);
-    else if (err)
-        draw_text(base, x0 + TG_PAD + 110, TAGS_Y + 18, "NOT SAVED", 0xffff4d4du);
-    fill_visual(base, TOG_X, TOG_Y, TOG_W, TOG_H, COL_ON);
-    draw_text_centered(base, TOG_X, TOG_Y, TOG_W, TOG_H, "TAGS ON", COL_TEXT);
-    fill_visual(base, x0 + TG_PAD, TAGS_Y + 46, w - 2 * TG_PAD, 2, COL_EDGE);
-    if (!tag_lines) {
-        draw_text(base, x0 + TG_PAD, TG_VIEW_Y + 16, "NO TAGS ON THIS STICK", COL_TAG_OFF);
-        tg_remember(base, page);
-        return;
-    }
-    clip_y0 = TG_VIEW_Y;
-    clip_y1 = TG_VIEW_Y + TG_VIEW_H;
-    for (i = 0; i < tag_lines; i++) {
-        const struct tagrec *r = &tag_rec[tag_line[i]];
-        int x, y, bw, bh, j, on;
-        char name[TAG_LEN];
-        tags_line_rect(i, w, &x, &y, &bw, &bh);
-        x += x0;
-        y += TG_VIEW_Y - tg_scroll;
-        if (y + bh <= TG_VIEW_Y || y >= TG_VIEW_Y + TG_VIEW_H)
-            continue;
-        for (j = 0; r->name[j] && j < TAG_LEN - 1; j++)
-            name[j] = r->name[j] >= 'a' && r->name[j] <= 'z' ? r->name[j] - 32 : r->name[j];
-        name[j] = 0;
-        if (r->cat_row) {
-            draw_text(base, x, y + (bh - 14) / 2, name, COL_TITLE);
-            fill_visual(base, x, y + bh - 2, bw, 2, COL_EDGE);
-            continue;
-        }
-        on = tag_is_active(r->id);
-        fill_visual(base, x, y, bw, bh, on ? COL_TAG_BGON : COL_BTN);
-        if (on)
-            fill_visual(base, x, y, 5, bh, COL_TAG_ON);
-        draw_text_centered(base, x, y, bw, bh, name, on ? COL_TAG_ON : COL_TAG_OFF);
-    }
-    if (max > 0)                   /* where the view sits in the list */
-        fill_visual(base, x0 + w - 6, TG_VIEW_Y + tg_scroll * (TG_VIEW_H - 40) / max, 3, 40, COL_TITLE);
-    clip_y0 = 0;
-    clip_y1 = 800;
-    tg_remember(base, page);
+    tags_render(base, x0, w, ya, yb, max, pend, err);
+    tg_remember(base, page, ya, yb);
 }
 
 static void set_beat_mode(int m)
