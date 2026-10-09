@@ -1478,13 +1478,13 @@ static void count_label_paint(unsigned char *base)
         return;
     c = ov_shm->info_cfg;
     on = (c & (INFO_SET | INFO_OFF | INFO_BEATS | INFO_CNT)) == (INFO_SET | INFO_BEATS | INFO_CNT) &&
-         (unsigned)mono_ms() - ov_shm->deck_ms <= 300;
+         (unsigned)mono_ms() - ov_shm->deck_ms <= 100;
     if (!on) {
         /* The driver skips tiles whose source did not change, so our pixels would stay once the screen or
          * the setting changes.  Changing the tab rect by a pixel makes it redraw every tile of each page. */
         if (painted) {
             painted = 0;
-            kick = 4;
+            kick = 3;
         }
         if (kick) {
             ov_shm->tab_w = --kick ? TAB_W + 1 : TAB_W;

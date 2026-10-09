@@ -2895,6 +2895,7 @@ static void install_preview_fixes(void)
 #define ADDR_DECK_UPDATE    0x0028fa1cUL  /* ui_Deck_Update(deck): refreshes the two info boxes */
 #define ADDR_OBJ_BY_ID      0x0018dae8UL  /* ui_com_draw_GetObjectByID(handle, index) */
 #define ADDR_OBJ_REFRESH    0x0018e1a0UL  /* ui_com_draw_RefreshObject(handle, index) */
+#define ADDR_DECK_CLEAR     0x00292174UL  /* ui_CTRL_DECK_Clear(): the boxes go away (leaving the player screen) */
 #define ADDR_DECK_SET       0x002920ccUL  /* ui_CTRL_DECK_Set(): every tick of the player screen, never on Browse */
 #define ADDR_DECK_HANDLE    0x02683fb0UL  /* the draw handle ui_Deck_Update passes to those */
 #define ADDR_CUE_RENEW      0x0018554cUL  /* CmnFunc_CmnInfo_CountDownCueNumRenew_Req(deck) */
@@ -2904,6 +2905,7 @@ static void install_preview_fixes(void)
 static unsigned (*g_countdown)(int);
 static void (*g_deck_update)(int);
 static void (*g_deck_set)(void);
+static void (*g_deck_clear)(void);
 
 /* The MOD INFO, ROWS and COUNT rows: INFO_OFF = leave the boxes to rbp, bits INFO_SRC.. = rows shown,
  * INFO_BEATS = count in beats. */
@@ -3023,6 +3025,13 @@ static void deck_set_hook(void)
      g_deck_set();
 }
 
+static void deck_clear_hook(void)
+{
+     if (jog_ov)
+          jog_ov->deck_ms = 0;
+     g_deck_clear();
+}
+
 static void install_deck_panel(void)
 {
      if (!is_rbp_process())
@@ -3030,7 +3039,8 @@ static void install_deck_panel(void)
      g_deck_update = hook_function(ADDR_DECK_UPDATE, 0xe92d4ff0u, 0xe3a030dcu, deck_update_hook);
      g_countdown = hook_function(ADDR_COUNTDOWN, 0xe92d40f8u, 0xe0801080u, countdown_hook);
      g_deck_set = hook_function(ADDR_DECK_SET, 0xe92d4038u, 0xe3a01ff9u, deck_set_hook);
-     if (!g_deck_update || !g_countdown || !g_deck_set)
+     g_deck_clear = hook_function(ADDR_DECK_CLEAR, 0xe92d4008u, 0xe3a00001u, deck_clear_hook);
+     if (!g_deck_update || !g_countdown || !g_deck_set || !g_deck_clear)
           klog("knobshim2: deck panel: unexpected code, some changes are off\n");
 }
 

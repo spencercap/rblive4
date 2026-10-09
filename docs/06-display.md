@@ -192,6 +192,6 @@ drawing is requested each tick. Hot cues are not looked up while the CUE row is 
   times the count, so the two bar digits read as beats. Past 99 beats it shows `--`. The red warning rbp gives
   at 16 beats then comes at 4 beats. rbp has no "Beats" label, so while BEATS is on the overlay (`fbshim-tsc`)
   covers the dot, the beat digit and the Bars label with the box's colour and writes `BEATS`. It does so only
-  while `knobshim2` has just run `ui_CTRL_DECK_Set` (`0x2920cc`), which runs every tick of the player screen
-  and never on Browse (`deck_ms` in the shared file). The overlay's pixels stay until rbp redraws that spot,
+  while `knobshim2` has run `ui_CTRL_DECK_Set` (`0x2920cc`) in the last 100 ms (it runs every tick of the player screen
+  and never on Browse; `ui_CTRL_DECK_Clear` zeroes it at once; `deck_ms` in the shared file). The overlay's pixels stay until rbp redraws that spot,
   so going back to BARS shows once the MOD panel is closed.
