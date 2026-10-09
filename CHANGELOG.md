@@ -4,6 +4,11 @@ Differences from [erhan-/rblive4](https://github.com/erhan-/rblive4), forked at 
 
 ## 2026-10-09
 
+### Memory cues on the deck buttons
+
+* **SLIP stores a memory cue** at the playhead, using rbp's own CueMemory key, so it is saved to the stick like the RX3's MEMORY button. SHIFT + SLIP is slip mode as before.
+* **Pad page arrows (Parameter ◄ ►) jump to the previous / next memory cue.** SHIFT + ◄ deletes the memory cue at the playhead. See [docs/08 — Memory cues](docs/08-controls.md#memory-cues).
+
 ### Deck info panel
 
 * **MOD INFO row.** **OFF** gives the deck info boxes back to rbp (source shown, Bars counts to memory cues) and the shim's hooks return on their first check.

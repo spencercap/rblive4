@@ -185,6 +185,11 @@ static int is_rbp_process(void)
 #define K_RELOOP     0x410e
 #define K_REV        0x410f
 #define K_SLIP       0x4110
+#define K_CUEMEMORY  0x4125    /* rbp "CueMemory": store a memory cue at the playhead */
+#define K_CUEDELETE  0x4124    /* rbp "CueDelete": delete the memory cue at the playhead */
+#define K_CALLNEXT   0x4322    /* rbp "CallNext" / "CallPrev": jump to the next / previous memory cue.  Their
+                                * codes are the other way round to what the names in rbp's key table suggest. */
+#define K_CALLPREV   0x4323
 #define K_MASTER     0x4111
 #define K_MASTERCUE  0x4407
 #define K_TRIM       0x5019
@@ -742,6 +747,27 @@ static void handle_note(int ch, int note, int on)
           if (jog_ov && jog_ov->skip_mode == SKIP_BEATS) {
                if (on)   /* DjEngineIF::playBeatJump(ch, type): 11 = back 16 beats, 12 = forward 16 */
                     ((void (*)(void *, int, int))0x00049ae0)(NULL, ch - 4, note == 7 ? 12 : 11);
+               return;
+          }
+     }
+     /* Memory cues: SLIP (note 36) stores one at the playhead and the pad page arrows (notes 23 / 24) call the
+      * previous / next one, through rbp's own CueMemory and CallPrev / CallNext keys.  SHIFT + SLIP is still
+      * slip mode; SHIFT + the left arrow deletes the memory cue at the playhead (CueDelete).  The release goes
+      * to whichever key the press sent. */
+     if ((ch == 4 || ch == 5) && (note == 36 || note == 23 || note == 24)) {
+          static int sent[2][3];     /* key sent by the press, per deck and button */
+          int *k = &sent[ch - 4][note == 36 ? 0 : note - 22];
+          if (on) {
+               int key = note == 36 ? (shift_down ? 0 : K_CUEMEMORY) :
+                         note == 23 ? (shift_down ? K_CUEDELETE : K_CALLPREV) : K_CALLNEXT;
+               if (key) {
+                    *k = key;
+                    send_rx_key(key, OP_PRESS, ch - 3, 0);
+                    return;
+               }
+          } else if (*k) {
+               send_rx_key(*k, OP_RELEASE, ch - 3, 0);
+               *k = 0;
                return;
           }
      }

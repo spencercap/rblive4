@@ -154,7 +154,8 @@ LIGHTING is the unused button under MENU. It has no Engine OS action in this por
 | Jog rotate | CC `0x11` hi + `0x31` lo (14-bit) | `0x4305` |
 | Key lock | note 34 | `0x4108` K_MT |
 | VINYL | note 35 | `0x4104` |
-| SLIP | note 36 | `0x4110` |
+| SLIP | note 36 | **memory cue**: `0x4125` K_CUEMEMORY stores a memory cue at the playhead. SHIFT + SLIP is the old `0x4110` slip mode. See [Memory cues](#memory-cues) |
+| Pad page ◄ / ► | notes 23 / 24 | **memory cue call**: `0x4323` / `0x4322` jump to the previous / next memory cue. SHIFT + ◄ is `0x4124` K_CUEDELETE |
 | Loop in / out | notes 37 / 38 | `0x410c` / `0x410d` |
 | Auto loop push / turn | note 39 / CC 32 | `0x4114` |
 | Pitch fader | CC `0x1F` hi + `0x4B` lo (14-bit, invert) | `0x4109` K_TEMPO_SLIDER |
@@ -262,6 +263,20 @@ rbp itself steps and clamps it (it adds `value * 13` to the current percent).
 
 so they are sent with **OP_PRESS**.
 
+### Memory cues
+
+The deck SLIP button and the pad page arrows (Parameter ◄ ►, notes 23 / 24) drive rbp's own memory cue keys, so rbp does the rest: it stores the cue in the track's database on the stick, draws the red ▼ marker on the waveform and overview, and counts to it in the Bars row when INFO is OFF.
+
+| Button | Does | rbp key |
+|---|---|---|
+| **SLIP** | Stores a memory cue at the playhead | `0x4125` "CueMemory" |
+| **◄** (note 23) | Jumps to the previous memory cue | `0x4323` |
+| **►** (note 24) | Jumps to the next memory cue | `0x4322` |
+| **SHIFT + ◄** | Deletes the memory cue at the playhead | `0x4124` "CueDelete" |
+| **SHIFT + SLIP** | Slip mode, as SLIP was before | `0x4110` |
+
+The call keys are the reverse of what their names in rbp's key table suggest; checked on the unit. A jump past the last or first cue does nothing. Hot cues and the Bars countdown (which counts to hot cues unless INFO is OFF) are separate.
+
 ### Beat-loop encoder
 
 The RX3 has no beat-loop knob (its pads trigger loops). On the SC Live 4 the
@@ -290,7 +305,7 @@ The pad-mode size tables below are still what rbp uses for its LOOP pads:
 
 ### Not mapped
 
-* Parameter (23/24), Layer (31), StopTime (CC 37), Thru (note 15) — no
+* Layer (31), StopTime (CC 37), Thru (note 15) — no
   direct rbp keycode, or needs a distinct param.
 * SHIFT (note 28 per deck) does four things, see [SHIFT](#shift). Every other
   RX3 SHIFT combination is not wired.
