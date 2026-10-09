@@ -41,15 +41,24 @@ The countdown turns red in the last 16 beats (4 beats in BEATS mode). It shows `
 
 ## My Tags in the track INFO panel
 
-Open the track **INFO** panel (the **INFO** button, top right of the screen). The right half, where the artwork would be, lists **every My Tag** (the tags you set in rekordbox) as a button, grouped by category. The loaded track's tags are **orange**; the rest are grey.
+See and change a track's **My Tags** (the genre, mood and other tags you set in rekordbox) without leaving the player. **Tap a tag to tag or untag the loaded track.**
 
-![My Tags in the INFO panel](my-tags.png)
+![My Tags in the INFO panel: every tag as a button, the loaded track's in orange](my-tags.png)
 
-* **Tap a tag to tag or untag the loaded track.** The change is written to the stick (the header shows SAVING, then it lights or dims). If it says NOT SAVED, the write failed and nothing changed.
-* **Drag the list up or down to scroll.**
-* **Turn the list off or on** with the **TAGS ON / OFF** button at the top right of the list, or with MOD row **TAGS**. They are the same setting.
-* The MOD menu stays on top; the list moves to its right while it is open.
-* Tags are shown in capitals. The list follows the track the INFO panel shows, which is the selected deck's: tap DECK 1 or DECK 2 on the left to switch.
+**How to use it:**
+
+1. Load a track and tap the **INFO** button (top right of the screen). The right half of the panel, where the artwork would be, now lists **every My Tag** as a button, grouped by category (Genre, Mood, and so on). The loaded track's tags are **orange**; the rest are grey.
+2. **Drag the list up or down** to scroll. The thin bar on its right edge shows where you are.
+3. **Tap a tag** to give the track that tag, or tap an orange one to take it off. The header shows **SAVING** while it is written to the stick, then the button lights or dims. If it says **NOT SAVED**, the write failed and nothing changed.
+4. **Switch decks** by tapping **DECK 1** or **DECK 2** on the left. The INFO panel and the tag list follow the selected deck (the one with the white frame).
+
+**Settings and behaviour:**
+
+* **Turn the list off or on** with the **TAGS ON / OFF** button at the top right of the list, or with MOD row **TAGS**. They are the same setting. With it off, rbp shows the artwork area as usual and a small TAGS OFF button stays to bring the list back.
+* The MOD menu stays on top; the list moves to its right while the menu is open.
+* The list stays on top of rbp's scrolling comment line and the "TRACK n/m" text, and it costs no measurable CPU or frame rate (about 60 fps with the panel open, same as with the list off).
+* Tags are shown in capitals.
+* If the stick has no My Tags (rekordbox writes them to `PIONEER/rekordbox/exportExt.pdb` when it exports), the area keeps rbp's artwork and there is nothing to show.
 * **Careful:** this edits your stick's library. A copy of the tag file is saved on the unit before the first change of each run (`/data/rbx3-run/mytags-backup/`). rekordbox on your computer does not read these changes, and its next export of the stick replaces them.
 
 Details: [08 — My Tags](08-controls.md#my-tags-in-the-info-panel).
