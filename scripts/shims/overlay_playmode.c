@@ -1471,14 +1471,27 @@ static void beat_paint(unsigned char *base, int page)
 static void count_label_paint(unsigned char *base)
 {
     static const int y[2] = {185, 406};
+    static int painted, kick;
     unsigned c;
-    int i;
+    int i, on;
     if (!ov_shm)
         return;
     c = ov_shm->info_cfg;
-    if ((c & (INFO_SET | INFO_OFF | INFO_BEATS | INFO_CNT)) != (INFO_SET | INFO_BEATS | INFO_CNT) ||
-        (unsigned)mono_ms() - ov_shm->deck_ms > 300)
+    on = (c & (INFO_SET | INFO_OFF | INFO_BEATS | INFO_CNT)) == (INFO_SET | INFO_BEATS | INFO_CNT) &&
+         (unsigned)mono_ms() - ov_shm->deck_ms <= 300;
+    if (!on) {
+        /* The driver skips tiles whose source did not change, so our pixels would stay once the screen or
+         * the setting changes.  Changing the tab rect by a pixel makes it redraw every tile of each page. */
+        if (painted) {
+            painted = 0;
+            kick = 4;
+        }
+        if (kick) {
+            ov_shm->tab_w = --kick ? TAB_W + 1 : TAB_W;
+        }
         return;
+    }
+    painted = 1;
     for (i = 0; i < 2; i++) {
         fill_visual(base, 55, y[i], 122, 26, 0xff181818u);
         draw_text(base, 62, y[i] + 7, "BEATS", COL_TEXT);
