@@ -13,7 +13,7 @@
  * Touch Cue on the deck overview waveforms while a deck plays), SKIP (SEARCH, LOOP SIZE:
  * what the SEARCH < > buttons do, applied by knobshim), INFO (OFF, ON: OFF leaves the two deck info boxes
  * to rbp), ROWS (SRC, KEY, CUE, LOOP: which rows of those boxes are shown, applied by knobshim), COUNT (BARS,
- * BEATS: the unit of the CUE row), and POWER.
+ * BEATS: the unit of the CUE row), TAGS (ON, OFF: My Tags in the track INFO panel), and POWER.
  * POWER always stays the last row.
  * The MODE button cycles those four play modes. EJECT asks usb-watch to
  * release the stick; the button then reads PULL until the stick is removed.
@@ -35,6 +35,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <sys/mman.h>
+#include <sys/stat.h>
 #include <sys/syscall.h>
 #include <time.h>
 #include <unistd.h>
@@ -104,11 +105,11 @@
 #define TAB_X ((1280 - TAB_W) / 2)
 #define TAB_Y 8
 
-/* Name on the left, value on the right. Seventeen rows under the MOD tab:
+/* Name on the left, value on the right. Eighteen rows under the MOD tab:
  * PAN_H = 2 * PAD + rows * ROW_H + (rows - 1) * ROW_GAP. The panel shows PAN_VIS_H of that and scrolls
  * (drag inside it) when PAN_H is taller. */
 #define PAN_W 348
-#define PAN_H 760
+#define PAN_H 804
 #define PAN_VIS_H (PAN_H < 800 - PAN_Y - 4 ? PAN_H : 800 - PAN_Y - 4)
 #define SCROLL_MAX (PAN_H - PAN_VIS_H)
 #define PAN_X ((1280 - PAN_W) / 2)
@@ -158,7 +159,8 @@
 #define INFO_BTN ((VAL_W - 3 * INFO_GAP) / 4)
 #define CNT_Y  ROW_Y(15)
 /* POWER is always the last row; add new rows above it. */
-#define PWR_Y  ROW_Y(16)
+#define TAGROW_Y ROW_Y(16)
+#define PWR_Y  ROW_Y(17)
 
 #define COL_TAB    0xff1c2128u
 #define COL_PANEL  0xff121418u
@@ -1468,10 +1470,24 @@ static void beat_paint(unsigned char *base, int page)
  * two digits are the beats; cover the dot, the beat digit and the Bars label with the box's background and name
  * the unit.  Only while knobshim has just run the box update (it stamps deck_ms), i.e. while the player screen
  * is up.  rbp repaints the spot when a digit changes, so every frame (a few hundred pixels). */
+/* The driver skips tiles whose source did not change, so our pixels would stay once the screen or the setting
+ * changes.  Changing the tab rect by a pixel makes it redraw every tile of each page. */
+static int ov_kick;
+static void kick_redraw(void)
+{
+    ov_kick = 3;
+}
+
+static void kick_service(void)
+{
+    if (ov_kick && ov_shm)
+        ov_shm->tab_w = --ov_kick ? TAB_W + 1 : TAB_W;
+}
+
 static void count_label_paint(unsigned char *base)
 {
     static const int y[2] = {185, 406};
-    static int painted, kick;
+    static int painted;
     unsigned c;
     int i, on;
     if (!ov_shm)
@@ -1480,14 +1496,9 @@ static void count_label_paint(unsigned char *base)
     on = (c & (INFO_SET | INFO_OFF | INFO_BEATS | INFO_CNT)) == (INFO_SET | INFO_BEATS | INFO_CNT) &&
          (unsigned)mono_ms() - ov_shm->deck_ms <= 100;
     if (!on) {
-        /* The driver skips tiles whose source did not change, so our pixels would stay once the screen or
-         * the setting changes.  Changing the tab rect by a pixel makes it redraw every tile of each page. */
         if (painted) {
             painted = 0;
-            kick = 3;
-        }
-        if (kick) {
-            ov_shm->tab_w = --kick ? TAB_W + 1 : TAB_W;
+            kick_redraw();
         }
         return;
     }
@@ -1495,6 +1506,157 @@ static void count_label_paint(unsigned char *base)
     for (i = 0; i < 2; i++) {
         fill_visual(base, 55, y[i], 122, 26, 0xff181818u);
         draw_text(base, 62, y[i] + 7, "BEATS", COL_TEXT);
+    }
+}
+
+/* ---- My Tags in the track INFO panel ------------------------------------------------------------------------
+ * The panel's right side shows the artwork, which this port never has.  While the panel is open (its INFO button,
+ * top right, is lit) the overlay covers that area with the track's My Tags, read from the stick's exportExt.pdb:
+ * a DeviceSQL file whose type 3 table holds the tags (id at row +20, name at +32) and whose type 4 table holds
+ * (track id at +4, tag id at +8) pairs.  knobshim2 writes the loaded track's id to info_track[]. */
+#define TAG_FILE1 "/media/usb1/sda1/PIONEER/rekordbox/exportExt.pdb"
+#define TAG_FILE2 "/media/usb2/sda1/PIONEER/rekordbox/exportExt.pdb"
+#define TAG_MAX 14
+#define TAG_LEN 40
+#define TAGS_X 729
+#define TAGS_Y 50
+#define TAGS_W 542
+#define TAGS_H 380
+#define COL_INFO_BG 0xff313031u
+#define COL_INFO_ON 0xff007de7u   /* the INFO button when the panel is open */
+
+static char tag_name[TAG_MAX][TAG_LEN];
+static int tag_n;
+static unsigned tag_for, tag_ok;   /* track id the list is for; 1 when the file had data */
+static long tag_mtime;
+
+static unsigned rd32(const unsigned char *p)
+{
+    return p[0] | p[1] << 8 | p[2] << 16 | (unsigned)p[3] << 24;
+}
+
+/* Rows of one DeviceSQL page: offsets come from the footer, 16 per group, newest first. */
+static int page_rows(const unsigned char *pg, int ps, int *off, int max)
+{
+    int n = pg[24], i, g, r = 0;
+    for (g = 0; g * 16 < n; g++)
+        for (i = 0; i < 16 && g * 16 + i < n && r < max; i++) {
+            int e = ps - g * 0x24 - 6 - 2 * i;
+            if (e < 0x28)
+                return r;
+            off[r++] = 0x28 + pg[e] + (pg[e + 1] << 8);
+        }
+    return r;
+}
+
+static void tags_load(unsigned track)
+{
+    static unsigned char buf[1 << 20];
+    unsigned tag_ids[TAG_MAX], ids_n = 0;
+    struct stat st;
+    int fd, len, ps, tables, t, i, k, pass;
+    const char *file = TAG_FILE1;
+    tag_n = 0;
+    tag_for = track;
+    tag_ok = 0;
+    if (stat(file, &st) != 0 && stat(file = TAG_FILE2, &st) != 0)
+        return;
+    tag_mtime = (long)st.st_mtime;
+    fd = open(file, O_RDONLY);
+    if (fd < 0)
+        return;
+    len = (int)read(fd, buf, sizeof(buf));
+    close(fd);
+    if (len < 4096 * 3)
+        return;
+    ps = (int)rd32(buf + 4);
+    tables = (int)rd32(buf + 8);
+    if (ps != 4096 || tables < 1 || tables > 20 || 28 + tables * 16 > len)
+        return;
+    tag_ok = 1;
+    /* pass 0: the tag ids of this track (table type 4); pass 1: their names (type 3) */
+    for (pass = 0; pass < 2; pass++)
+        for (t = 0; t < tables && (pass == 0 || ids_n); t++) {
+            unsigned type = rd32(buf + 28 + t * 16), pgn = rd32(buf + 36 + t * 16), last = rd32(buf + 40 + t * 16);
+            int guard;
+            if (type != (pass ? 3u : 4u))
+                continue;
+            for (guard = 0; guard < 64 && (pgn + 1) * (unsigned)ps <= (unsigned)len; guard++) {
+                const unsigned char *pg = buf + pgn * ps;
+                int off[256], n = page_rows(pg, ps, off, 256);
+                for (i = 0; i < n; i++) {
+                    const unsigned char *r = pg + off[i];
+                    if (off[i] + 12 > ps)
+                        continue;
+                    if (!pass) {
+                        if (rd32(r + 4) == track && ids_n < TAG_MAX)
+                            tag_ids[ids_n++] = rd32(r + 8);
+                        continue;
+                    }
+                    if (off[i] + 32 + 2 * TAG_LEN > ps || r[0] != 0x80 || r[1] != 0x06 || r[28] != 3)
+                        continue;
+                    for (k = 0; k < (int)ids_n; k++)
+                        if (tag_ids[k] == rd32(r + 20)) {
+                            int l = (r[31] - 3) / 2, j, dup = 0;
+                            if (l < 1 || l >= TAG_LEN)
+                                break;
+                            for (j = 0; j < tag_n; j++)
+                                dup |= !memcmp(tag_name[j], r + 32, l) && !tag_name[j][l];
+                            if (!dup && tag_n < TAG_MAX) {
+                                memcpy(tag_name[tag_n], r + 32, l);
+                                tag_name[tag_n++][l] = 0;
+                            }
+                            break;
+                        }
+                }
+                if (pgn == last)
+                    break;
+                pgn = rd32(pg + 12);
+            }
+        }
+}
+
+static void tags_paint(unsigned char *base)
+{
+    static int painted, last_stat_ms;
+    unsigned track, c;
+    int i, y, now = (int)mono_ms();
+    char line[TAG_LEN];
+    if (!ov_shm)
+        return;
+    c = ov_shm->info_cfg;
+    track = ov_shm->info_track[0] ? ov_shm->info_track[0] : ov_shm->info_track[1];
+    /* the INFO button is lit while the panel is open */
+    if ((c & INFO_NOTAGS) || !track ||
+        (*((unsigned *)(base + (unsigned)(1279 - 1200) * fb_pitch) + 24) & 0xffffff) != (COL_INFO_ON & 0xffffff)) {
+        if (painted) {
+            painted = 0;
+            kick_redraw();
+        }
+        return;
+    }
+    if (track != tag_for) {
+        tags_load(track);
+    } else if (now - last_stat_ms > 2000) {
+        struct stat st;
+        last_stat_ms = now;
+        if (stat(TAG_FILE1, &st) == 0 && (long)st.st_mtime != tag_mtime)
+            tags_load(track);
+    }
+    if (!tag_ok)
+        return;                       /* no tag file: leave the artwork */
+    painted = 1;
+    fill_visual(base, TAGS_X, TAGS_Y, TAGS_W, TAGS_H, COL_INFO_BG);
+    draw_text(base, TAGS_X + 24, TAGS_Y + 24, "MY TAGS", COL_TITLE);
+    fill_visual(base, TAGS_X + 24, TAGS_Y + 48, TAGS_W - 48, 2, COL_EDGE);
+    if (!tag_n)
+        draw_text(base, TAGS_X + 24, TAGS_Y + 70, "NO TAGS", COL_EDGE);
+    for (i = y = 0; i < tag_n; i++, y += 24) {
+        int j;
+        for (j = 0; tag_name[i][j] && j < TAG_LEN - 1; j++)
+            line[j] = tag_name[i][j] >= 'a' && tag_name[i][j] <= 'z' ? tag_name[i][j] - 32 : tag_name[i][j];
+        line[j] = 0;
+        draw_text(base, TAGS_X + 24, TAGS_Y + 70 + y, line, COL_TEXT);
     }
 }
 
@@ -1873,7 +2035,9 @@ void overlay_paint(int fb_fd, unsigned yoffset)
     if (page < 0 || page >= 3)
         page = 0;
     beat_paint(base, page);
+    kick_service();
     count_label_paint(base);
+    tags_paint(base);
     playhead_paint(base, page);
     hash = 2166136261u;
     hash = hash_bytes(hash, &open, sizeof(open));
@@ -2005,6 +2169,12 @@ void overlay_paint(int fb_fd, unsigned yoffset)
     fill_visual(base, QUANT_OFF_X, CNT_Y, QUANT_HALF, ROW_H, ov_info & INFO_BEATS ? COL_ON : COL_BTN);
     draw_text_centered(base, QUANT_OFF_X, CNT_Y, QUANT_HALF, ROW_H, "BEATS", COL_TEXT);
 
+    draw_label(base, TAGROW_Y, "TAGS");
+    fill_visual(base, QUANT_ON_X, TAGROW_Y, QUANT_HALF, ROW_H, !(ov_info & INFO_NOTAGS) ? COL_ON : COL_BTN);
+    draw_text_centered(base, QUANT_ON_X, TAGROW_Y, QUANT_HALF, ROW_H, "ON", COL_TEXT);
+    fill_visual(base, QUANT_OFF_X, TAGROW_Y, QUANT_HALF, ROW_H, ov_info & INFO_NOTAGS ? COL_ON : COL_BTN);
+    draw_text_centered(base, QUANT_OFF_X, TAGROW_Y, QUANT_HALF, ROW_H, "OFF", COL_TEXT);
+
     draw_label(base, SKIP_Y, "SKIP");
     fill_visual(base, QUANT_ON_X, SKIP_Y, QUANT_HALF, ROW_H, !ov_skip ? COL_ON : COL_BTN);
     draw_text_centered(base, QUANT_ON_X, SKIP_Y, QUANT_HALF, ROW_H, "SEARCH", COL_TEXT);
@@ -2086,7 +2256,7 @@ int overlay_touch(int down, int was_down, int lx, int ly)
     int on_tag, on_tags, on_find, on_link_on, on_link_off, on_tcue_on, on_tcue_off, on_skip_srch, on_skip_beats;
     int on_beat_off, on_beat_bars, on_beat_drift;
     int on_scr_dn, on_scr_up, on_led_dn, on_led_up, on_cnt_bars, on_cnt_beats, on_info_off, on_info_on;
-    int info_hit = -1;
+    int info_hit = -1, on_tg_on, on_tg_off;
     static int press_x, press_y, press_scroll, pressed, dragging;
     int fresh;
     unsigned long long now;
@@ -2156,6 +2326,8 @@ int overlay_touch(int down, int was_down, int lx, int ly)
         on_skip_beats = in_rect(vx, vy, QUANT_OFF_X, SKIP_Y, QUANT_HALF, ROW_H);
         on_cnt_bars = in_rect(vx, vy, QUANT_ON_X, CNT_Y, QUANT_HALF, ROW_H);
         on_cnt_beats = in_rect(vx, vy, QUANT_OFF_X, CNT_Y, QUANT_HALF, ROW_H);
+        on_tg_on = in_rect(vx, vy, QUANT_ON_X, TAGROW_Y, QUANT_HALF, ROW_H);
+        on_tg_off = in_rect(vx, vy, QUANT_OFF_X, TAGROW_Y, QUANT_HALF, ROW_H);
         on_info_off = in_rect(vx, vy, QUANT_ON_X, INFO_Y, QUANT_HALF, ROW_H);
         on_info_on = in_rect(vx, vy, QUANT_OFF_X, INFO_Y, QUANT_HALF, ROW_H);
         for (info_hit = 3; info_hit >= 0; info_hit--)
@@ -2237,6 +2409,10 @@ int overlay_touch(int down, int was_down, int lx, int ly)
                 request_skip(0);
             else if (on_skip_beats)
                 request_skip(1);
+            else if (on_tg_on && (ov_info & INFO_NOTAGS))
+                request_info(INFO_NOTAGS);
+            else if (on_tg_off && !(ov_info & INFO_NOTAGS))
+                request_info(INFO_NOTAGS);
             else if (on_info_off && !(ov_info & INFO_OFF))
                 request_info(INFO_OFF);
             else if (on_info_on && (ov_info & INFO_OFF))

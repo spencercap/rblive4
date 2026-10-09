@@ -36,6 +36,8 @@ struct rb_overlay_shm {
     volatile unsigned info_cfg;
     /* Written by knobshim2 each time the info boxes update: CLOCK_MONOTONIC ms, low 32 bits. */
     volatile unsigned deck_ms;
+    /* The rekordbox track id of what each deck has loaded, 0 = none (written by knobshim2 for the My Tags view). */
+    volatile unsigned info_track[2];
 };
 
 #define INFO_SET   0x80000000u   /* set once the MOD INFO row has been used */
@@ -44,6 +46,7 @@ struct rb_overlay_shm {
 #define INFO_CNT   4u
 #define INFO_LOOP  8u
 #define INFO_BEATS 16u           /* the count is in beats, not bars */
+#define INFO_NOTAGS 64u          /* leave the track INFO panel artwork area alone (no My Tags view) */
 #define INFO_OFF   32u           /* leave the boxes to rbp: source shown, Bars counts to memory cues */
 #define INFO_DEF   (INFO_KEY | INFO_CNT | INFO_LOOP)
 

@@ -4,6 +4,10 @@ Differences from [erhan-/rblive4](https://github.com/erhan-/rblive4), forked at 
 
 ## 2026-10-09
 
+### My Tags in the track INFO panel
+
+* **The INFO panel lists the loaded track's My Tags** in its right half (where the artwork would be), read from the stick's `exportExt.pdb`. New MOD row **TAGS** (default ON) turns it off. Shown in capitals, up to 14 tags. See [docs/08 — My Tags](docs/08-controls.md#my-tags-in-the-info-panel).
+
 ### SEARCH < > beat-jump by the loop size
 
 * **MOD SKIP is now SEARCH or LOOP SIZE** (was SEARCH or 16 BEATS). With LOOP SIZE, SEARCH `<` `>` jump back / forward by the size the deck's loop encoder is set to: 128, 64, 32, 16, 8, 4, 2 or 1 beats (1/2 beat for smaller sizes). rbp's beat jump stops at 16, so 32 to 128 repeat it, waiting for each jump to land and sending it again if rbp drops it.

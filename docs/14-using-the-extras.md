@@ -2,7 +2,7 @@
 
 A how-to for everything this fork adds on top of the stock port. Each item says what it does, how to use it on the unit, and where the details are. Nothing here needs SSH once the player is running.
 
-**Jump to:** [MOD menu](#the-mod-menu) · [Memory cues](#memory-cues-slip-and-the-pad-page-arrows) · [Hot cue countdown](#the-hot-cue-countdown-deck-info-boxes) · [Beat meter](#beat-meter) · [SHIFT combos](#shift-combos) · [Touch Cue](#touch-cue) · [Track Preview](#track-preview)
+**Jump to:** [MOD menu](#the-mod-menu) · [My Tags](#my-tags-in-the-track-info-panel) · [Memory cues](#memory-cues-slip-and-the-pad-page-arrows) · [Hot cue countdown](#the-hot-cue-countdown-deck-info-boxes) · [Beat meter](#beat-meter) · [SHIFT combos](#shift-combos) · [Touch Cue](#touch-cue) · [Track Preview](#track-preview)
 
 ## The MOD menu
 
@@ -38,6 +38,18 @@ The two boxes left of the waveforms (DECK 1 and DECK 2) show source, key, a coun
 | **COUNT** | BARS / BEATS | **BARS** reads like `02.3` (bars.beats). **BEATS** reads like `11 BEATS`. Over 99 beats it shows `--`. |
 
 The countdown turns red in the last 16 beats (4 beats in BEATS mode). It shows `--.-` when no hot cue is ahead. Details: [06 — Deck info panel](06-display.md#deck-info-panel).
+
+## My Tags in the track INFO panel
+
+Open the track **INFO** panel (the **INFO** button, top right of the screen). The right half, where the artwork would be, lists the loaded track's **My Tags** (the tags you set in rekordbox). The tags are read from the stick, so they need the rekordbox export that includes tags.
+
+![My Tags in the INFO panel](my-tags.png)
+
+* Turn it off with MOD row **TAGS** (OFF gives the area back to rbp).
+* Tags are shown in capitals.
+* It follows deck 1's track (deck 2's if deck 1 is empty).
+
+Details: [08 — My Tags](08-controls.md#my-tags-in-the-info-panel).
 
 ## Beat meter
 

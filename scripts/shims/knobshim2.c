@@ -3018,9 +3018,15 @@ static void install_preview_fixes(void)
 #define ADDR_DECK_CLEAR     0x00292174UL  /* ui_CTRL_DECK_Clear(): the boxes go away (leaving the player screen) */
 #define ADDR_DECK_SET       0x002920ccUL  /* ui_CTRL_DECK_Set(): every tick of the player screen, never on Browse */
 #define ADDR_DECK_HANDLE    0x02683fb0UL  /* the draw handle ui_Deck_Update passes to those */
+#define ADDR_MUSIC_ID       0x001842f4UL  /* CmnFunc_CmnInfo_GetLocalNowPlayMusicID(deck, id[8]): id[1] device, +4 track id */
 #define ADDR_CUE_RENEW      0x0018554cUL  /* CmnFunc_CmnInfo_CountDownCueNumRenew_Req(deck) */
 #define INFO_ROWS           (INFO_SRC | INFO_KEY | INFO_CNT | INFO_LOOP)
 #define CUE_BEATS(d)        ((unsigned *)(0x0322ab70UL + (d) * 0x12fd8UL + 0x10ef4UL))
+
+static unsigned rd_u32(const unsigned char *p)
+{
+     return *(const unsigned *)p;
+}
 
 static unsigned (*g_countdown)(int);
 static void (*g_deck_update)(int);
@@ -3104,6 +3110,8 @@ static void deck_obj_hide(void *h, int id)
           ((void (*)(void *, int))(*(void ***)o)[5])(o, 0);
 }
 
+static void track_id_poll(int deck, unsigned cfg);
+
 /* rbp shows what it wants in ui_Deck_Update; hide what the MOD ROWS row turned off right after, on the same
  * (UI) thread and before the next paint.  It runs about 60 times a second per deck; with every row shown
  * (or INFO OFF) that is one compare per row. */
@@ -3116,6 +3124,7 @@ static void deck_update_hook(int deck)
      g_deck_update(deck);
      if ((unsigned)deck > 1 || !h)
           return;
+     track_id_poll(deck, cfg);
      if (cfg & INFO_OFF)
           cfg = INFO_ROWS;
      for (r = 0; r < 4; r++) {
@@ -3135,6 +3144,22 @@ static void deck_update_hook(int deck)
           if (!(cfg & (INFO_SRC << r)))
                for (i = 0; deck_row[r][i]; i++)
                     deck_obj_hide(h, deck_row[r][i] + 39 * deck);
+}
+
+/* The overlay's My Tags view needs the rekordbox id of each deck's track; ask rbp twice a second. */
+static void track_id_poll(int deck, unsigned cfg)
+{
+     static unsigned n[2];
+     unsigned char id[8];
+     if (!jog_ov || (n[deck]++ & 31))
+          return;
+     if (cfg & INFO_NOTAGS) {
+          jog_ov->info_track[deck] = 0;
+          return;
+     }
+     memset(id, 0, sizeof(id));
+     ((void (*)(int, unsigned char *))ADDR_MUSIC_ID)(deck, id);
+     jog_ov->info_track[deck] = id[1] <= 5 && rd_u32(id + 4) && rd_u32(id + 4) != ~0u ? rd_u32(id + 4) : 0;
 }
 
 /* The overlay names the BEATS unit only while this runs, i.e. on the player screen. */

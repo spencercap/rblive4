@@ -53,6 +53,7 @@ A **MOD** tab at the top center of the screen opens this panel. It is taller tha
 | **INFO** | **ON** (default) or **OFF**. **OFF** leaves the DECK 1 / DECK 2 info boxes left of the waveforms to rbp: the source row shows again and Bars counts to the next memory cue. The shim's hooks then return on their first check. See [06](06-display.md#deck-info-panel). | No RX3 equivalent. |
 | **ROWS** | With INFO **ON**: which rows of those boxes are shown: **SRC** (where the track came from, "USB1"; off by default), **KEY**, **CUE** (the countdown to the next hot cue), **LOOP** (loop size). Green = shown. A hidden row stays an empty strip. | No RX3 equivalent. |
 | **COUNT** | The unit of the **CUE** row: **BARS** (default, `bars.beats` such as `02.3`) or **BEATS** (a plain beat count up to 99, such as `11`, labelled BEATS). | No RX3 equivalent. |
+| **TAGS** | **ON** (default) or **OFF**. ON shows the loaded track's My Tags in the right half of the track INFO panel, in place of the artwork area. OFF leaves that area to rbp. See [My Tags](#my-tags-in-the-info-panel). | No RX3 equivalent. |
 | **POWER** | Always the last row. The first tap shows **YES**. The **YES** tap ejects both sticks, then powers the unit off. Closing the panel before **YES** cancels it. | No RX3 key. The launcher handles the shutdown. |
 
 ### Track Preview
@@ -79,6 +80,17 @@ On the CDJ-3000X you press a deck's waveform to listen to that point in the head
 * **Pad LED.** The LED belongs to rbp's UI, which lights it only from its own pad handler. After the engine call the overlay replays that handler's UI steps on the paint thread: `ui::Player::updateHotCueLedState`, `updateOwnSavingHotCueLedColor`, then the colour bytes copy. The deck's `ui::Player` is picked up by a hook on `checkHotCueLedState`, which rbp runs for every pad refresh.
 * **Cost.** TCUE OFF returns on the first check of the touch handler. When no Touch Cue or preview is running, the playhead painter and the LED job return on a single comparison per frame.
 * **Known limit.** The preview audio is rough (glitchy). The preview player has no VBR seek table for the deck's file, because the deck's copy was cleared, and fetching it from the database by track ID is not done yet. TODO.
+
+### My Tags in the INFO panel
+
+![The track INFO panel with My Tags in its right half](my-tags.png)
+
+rbp has the My Tag data but its INFO panel (the **INFO** button, top right) has no tag row, and the artwork area on its right is empty on this port. While the panel is open, the overlay covers that area with the loaded track's tags. MOD row **TAGS** turns it off.
+
+* **Where the tags come from.** The stick's `PIONEER/rekordbox/exportExt.pdb`, a DeviceSQL file with the same page layout as `export.pdb`. Its type 3 table holds the tags (rows start `80 06`; the tag id is the u32 at row +20; the name is at +32, its length byte at +31 is 2 × length + 3) and its type 4 table holds one row per assignment (track id u32 at +4, tag id u32 at +8). Tag rows are also kept for the categories (Genre, Components and so on); only the ones a track is assigned to are shown. Pages are found through the table directory at file offset 28 and followed by their next-page link at +12. A tag that appears on several pages (stale copies) is shown once.
+* **Which track.** `knobshim2` asks rbp for each deck's loaded track (`CmnFunc_CmnInfo_GetLocalNowPlayMusicID`, the id is the u32 at +4, the same id as the stick's `export.pdb`) twice a second and writes it to `info_track[]` in `/tmp/rb-overlay`. The overlay uses deck 1's, or deck 2's when deck 1 is empty. The INFO panel itself shows the active deck's track, which this does not follow.
+* **When it is drawn.** Only while the INFO button at the top right is lit (the overlay reads that pixel, since rbp has no flag for it). Closing the panel or turning TAGS off forces one full redraw so the area comes back.
+* **Limits.** The overlay's built-in font is upper case only, so tags are shown in capitals, and a letter it has no shape for is left blank. Up to 14 tags of 39 characters. The area is painted every frame while the panel is open, which cost about 0.05 of a core (60 fps held).
 
 ### Beat meter
 
