@@ -1539,7 +1539,7 @@ static void count_label_paint(unsigned char *base)
 #define TAGS_X 729
 #define TAGS_Y 50
 #define TAGS_W 542
-#define TAGS_H 380
+#define TAGS_H 519                 /* down to the bottom of the panel, over its comment row */
 #define TAGS_HEAD 56               /* header row height: title and the ON / OFF button */
 #define TOG_W 116
 #define TOG_H 30
@@ -1754,7 +1754,11 @@ static int tags_max_scroll(int w)
 
 static unsigned tags_track(void)
 {
-    return ov_shm ? (ov_shm->info_track[0] ? ov_shm->info_track[0] : ov_shm->info_track[1]) : 0;
+    if (!ov_shm)
+        return 0;
+    if (ov_shm->info_view_track)
+        return ov_shm->info_view_track;
+    return ov_shm->info_track[0] ? ov_shm->info_track[0] : ov_shm->info_track[1];
 }
 
 static int tag_is_active(unsigned id)
@@ -1854,6 +1858,33 @@ static int tags_touch(int down, int fresh, int vx, int vy)
     return 1;
 }
 
+/* rbp redraws this area when the panel changes (a new track, the other deck, opening it): that wipes our pixels
+ * without any change of ours.  A few pixels read back after each paint tell when that has happened. */
+#define TG_NS 12
+static unsigned tg_expect[3][TG_NS];
+static const short tg_sx[4] = { 850, 1000, 1150, 1255 }, tg_sy[3] = { 120, 260, 400 };
+
+static unsigned tg_sample(const unsigned char *base, int i)
+{
+    return *((const unsigned *)(base + (unsigned)(1279 - tg_sx[i % 4]) * fb_pitch) + tg_sy[i / 4]);
+}
+
+static void tg_remember(const unsigned char *base, int page)
+{
+    int i;
+    for (i = 0; i < TG_NS; i++)
+        tg_expect[page][i] = tg_sample(base, i);
+}
+
+static int tg_intact(const unsigned char *base, int page)
+{
+    int i;
+    for (i = 0; i < TG_NS; i++)
+        if (tg_expect[page][i] != tg_sample(base, i))
+            return 0;
+    return 1;
+}
+
 /* Paint once per fb page and change; the driver leaves our pixels alone while rbp's do not change.  ov_repaint
  * covers the full redraws that kick_redraw forces. */
 static void tags_paint(unsigned char *base, int page)
@@ -1875,6 +1906,8 @@ static void tags_paint(unsigned char *base, int page)
         }
         return;
     }
+    if (!tags_lit)
+        ov_repaint = 40;           /* rbp is still drawing the panel: keep painting until it settles */
     tags_lit = 1;
     tn = tags_track();
     if ((!tag_n && !tag_ok && !last_stat_ms) || tn != file_active_for)
@@ -1903,7 +1936,7 @@ static void tags_paint(unsigned char *base, int page)
     h = hash_bytes(h, &err, sizeof(err));
     c &= INFO_NOTAGS;
     h = hash_bytes(h, &c, sizeof(c));
-    if (h == last[page] && !ov_repaint)
+    if (h == last[page] && !ov_repaint && (c || !tag_ok || tg_intact(base, page)))
         return;
     if (last[page] && h != last[page] && c)
         kick_redraw();             /* switching the list off: give the area back */
@@ -1926,6 +1959,7 @@ static void tags_paint(unsigned char *base, int page)
     fill_visual(base, x0 + TG_PAD, TAGS_Y + 46, w - 2 * TG_PAD, 2, COL_EDGE);
     if (!tag_lines) {
         draw_text(base, x0 + TG_PAD, TG_VIEW_Y + 16, "NO TAGS ON THIS STICK", COL_TAG_OFF);
+        tg_remember(base, page);
         return;
     }
     clip_y0 = TG_VIEW_Y;
@@ -1957,6 +1991,7 @@ static void tags_paint(unsigned char *base, int page)
         fill_visual(base, x0 + w - 6, TG_VIEW_Y + tg_scroll * (TG_VIEW_H - 40) / max, 3, 40, COL_TITLE);
     clip_y0 = 0;
     clip_y1 = 800;
+    tg_remember(base, page);
 }
 
 static void set_beat_mode(int m)

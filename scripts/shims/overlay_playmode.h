@@ -45,6 +45,8 @@ struct rb_overlay_shm {
     /* A tag edit asked for by the overlay: tag_req_on 1 = add, 0 = remove; knobshim2 answers by setting
      * tag_ack_seq = tag_req_seq, with tag_ack_err nonzero when it failed. */
     volatile unsigned tag_req_track, tag_req_tag, tag_req_on, tag_req_seq, tag_ack_seq, tag_ack_err;
+    /* The track the INFO panel shows: the selected deck's (knobshim2 reads rbp's deck select), 0 = unknown. */
+    volatile unsigned info_view_track;
 };
 
 #define INFO_SET   0x80000000u   /* set once the MOD INFO row has been used */

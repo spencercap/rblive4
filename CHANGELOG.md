@@ -6,6 +6,7 @@ Differences from [erhan-/rblive4](https://github.com/erhan-/rblive4), forked at 
 
 ### My Tags in the track INFO panel
 
+* **The tag list follows the deck the INFO panel shows,** fills the whole right side of the panel down to the bottom, and repaints when rbp redraws the panel under it (it used to stay stale after switching decks and flicker on opening).
 * **Tap a tag to tag or untag the loaded track.** Every tag is now a big scrolling button (twice the height of the TAGS ON button). The change goes through rbp's own database on its database task (a hook on `trcv_mbx`), which writes the stick's `exportExt.pdb`; the file is backed up first and a failed edit rolls back. The tags a track has are read from rbp's database too. See [docs/08 — My Tags](docs/08-controls.md#my-tags-in-the-info-panel).
 * **The INFO panel lists every My Tag, with the loaded track's in orange,** in its right half (where the artwork would be), read from the stick's `exportExt.pdb`. A **TAGS ON / OFF** button at the top of the list and MOD row **TAGS** (default ON) switch it. The list is painted once per change instead of every frame, so it no longer flickers against the MOD menu, which stays on top. Shown in capitals. See [docs/08 — My Tags](docs/08-controls.md#my-tags-in-the-info-panel).
 

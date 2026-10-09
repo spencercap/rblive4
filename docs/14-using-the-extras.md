@@ -49,7 +49,7 @@ Open the track **INFO** panel (the **INFO** button, top right of the screen). Th
 * **Drag the list up or down to scroll.**
 * **Turn the list off or on** with the **TAGS ON / OFF** button at the top right of the list, or with MOD row **TAGS**. They are the same setting.
 * The MOD menu stays on top; the list moves to its right while it is open.
-* Tags are shown in capitals. It follows deck 1's track (deck 2's if deck 1 is empty).
+* Tags are shown in capitals. The list follows the track the INFO panel shows, which is the selected deck's: tap DECK 1 or DECK 2 on the left to switch.
 * **Careful:** this edits your stick's library. A copy of the tag file is saved on the unit before the first change of each run (`/data/rbx3-run/mytags-backup/`). rekordbox on your computer does not read these changes, and its next export of the stick replaces them.
 
 Details: [08 — My Tags](08-controls.md#my-tags-in-the-info-panel).

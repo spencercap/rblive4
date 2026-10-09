@@ -3111,6 +3111,7 @@ static void deck_obj_hide(void *h, int id)
 }
 
 static void track_id_poll(int deck, unsigned cfg);
+static void view_track_update(void);
 
 /* rbp shows what it wants in ui_Deck_Update; hide what the MOD ROWS row turned off right after, on the same
  * (UI) thread and before the next paint.  It runs about 60 times a second per deck; with every row shown
@@ -3125,6 +3126,8 @@ static void deck_update_hook(int deck)
      if ((unsigned)deck > 1 || !h)
           return;
      track_id_poll(deck, cfg);
+     if (deck == 0)
+          view_track_update();
      if (cfg & INFO_OFF)
           cfg = INFO_ROWS;
      for (r = 0; r < 4; r++) {
@@ -3301,6 +3304,21 @@ static void mytags_service(unsigned track, int refresh)
 /* The overlay's My Tags view needs the rekordbox id of each deck's track; ask rbp twice a second.  The ids are
  * also kept here: /tmp/rb-overlay outlives rbp, and rbp's database is not up until a track has loaded, so a
  * stale id from the last run must never reach the edb_* calls. */
+static unsigned g_view_track;   /* the track the INFO panel shows: the selected deck's */
+
+/* rbp marks the selected deck's box in the DECK 1 / DECK 2 pair with the value 2 at +80 of its 220 byte record
+ * (ui_CTRL_DECK_Set passes that test to ui_Deck_UpdateSelectLine); the INFO panel follows that deck. */
+static void view_track_update(void)
+{
+     unsigned sel0 = *(volatile unsigned *)(0x032b2a88UL + 80), sel1 = *(volatile unsigned *)(0x032b2a88UL + 80 + 220);
+     unsigned t = sel1 == 2 ? g_track[1] : sel0 == 2 ? g_track[0] : g_track[0] ? g_track[0] : g_track[1];
+     if (!jog_ov)
+          return;
+     g_view_track = t;
+     if (jog_ov->info_view_track != t)
+          jog_ov->info_view_track = t;
+}
+
 static void track_id_poll(int deck, unsigned cfg)
 {
      static unsigned n[2];
@@ -3346,7 +3364,7 @@ static int trcv_hook(int id, void *msg, int tmo, int x)
      if (lr >= DBSMAIN_LO && lr < DBSMAIN_HI && jog_ov && !(info_cfg() & INFO_NOTAGS)) {
           static unsigned long long last;
           unsigned long long now = now_ms();
-          unsigned track = g_track[0] ? g_track[0] : g_track[1];
+          unsigned track = g_view_track;
           if (track && (jog_ov->tag_req_seq != jog_ov->tag_ack_seq || now - last >= 500)) {
                last = now;
                mytags_service(track, 1);
