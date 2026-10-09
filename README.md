@@ -6,6 +6,7 @@ see [CHANGELOG.md](https://github.com/spencercap/rblive4/blob/main/CHANGELOG.md)
 - ✅ BeatFX + knobs work 
 - ✅ Loop encoders work
 - 👾 added new MOD overlay panel for changing things previously unavailable (quantize on/off, safe eject USBs, etc)
+- 🎛️ memory cues on SLIP + the pad page arrows, a hot cue countdown, and more: see [what this fork adds](#what-this-fork-adds)
 - ⚡ screen runs at a locked 60 fps (was ~15), with an FPS readout in the MOD panel
 <img src="docs/rkb-scl4.png" alt="" width="720"/>
 <img src="docs/mod-menu.png" alt="" width="360"/>
@@ -32,6 +33,22 @@ unchanged.
 
 ---
 
+## What this fork adds
+
+New in this fork, on top of the port. **How to use each one: [docs/14 — Using the extras](docs/14-using-the-extras.md).**
+
+| Feature | What it does | How to use it |
+|---|---|---|
+| MOD menu | on-screen settings panel: quantize, waveform colour, screen and LED brightness, eject USB, power off. Scrolls by dragging. | [use](docs/14-using-the-extras.md#the-mod-menu) · [ref](docs/08-controls.md#mod-menu) |
+| Memory cues | **SLIP** stores one, the pad page **◄ ►** jump between them, **SHIFT + ◄** deletes | [use](docs/14-using-the-extras.md#memory-cues-slip-and-the-pad-page-arrows) · [ref](docs/08-controls.md#memory-cues) |
+| Hot cue countdown | the deck info box counts to the next hot cue, in bars or beats | [use](docs/14-using-the-extras.md#the-hot-cue-countdown-deck-info-boxes) · [ref](docs/06-display.md#deck-info-panel) |
+| Deck info rows | show or hide source, key, countdown and loop size; **INFO OFF** restores stock rbp | [use](docs/14-using-the-extras.md#the-hot-cue-countdown-deck-info-boxes) · [ref](docs/06-display.md#deck-info-panel) |
+| Beat meter | per-deck bar position or drift between decks, in the top bar | [use](docs/14-using-the-extras.md#beat-meter) · [ref](docs/08-controls.md#beat-meter) |
+| SHIFT combos | SHIFT + pad deletes a hot cue, SHIFT + jog searches, SEARCH `<` `>` can jump 16 beats | [use](docs/14-using-the-extras.md#shift-combos) · [ref](docs/08-controls.md#shift) |
+| Touch Cue | touch a playing deck's overview to hear that point in the headphones, set a hot cue from a pad | [use](docs/14-using-the-extras.md#touch-cue) · [ref](docs/08-controls.md#touch-cue) |
+| Track Preview | touch a browse row's mini waveform to audition it, with a playhead | [use](docs/14-using-the-extras.md#track-preview) · [ref](docs/08-controls.md#track-preview) |
+| 60 fps display | locked 60 fps (was about 15), with an FPS readout in the MOD panel | [ref](docs/06-display.md#frame-rate) |
+
 ## What it does
 
 | Subsystem | Detail | Doc |
@@ -39,9 +56,6 @@ unchanged.
 | Display | 800×1280 portrait framebuffer, rotated, rekordbox UI full-screen | [docs/06](docs/06-display.md) |
 | Touchscreen | ILI2117 capacitive, identity calibration installed in the chroot | [docs/07](docs/07-touch.md) |
 | Controls | transport, deck, mixer, jog, pads, DJ / Sound Color FX, and the MOD menu | [docs/08](docs/08-controls.md) |
-| Search and SHIFT | SHIFT + hot cue pad deletes the cue, SHIFT + jog searches, MOD **SKIP** turns SEARCH < > into a 16-beat jump | [docs/08](docs/08-controls.md#shift) |
-| Track Preview | touch a browse row's mini waveform to audition it in the headphones, with a playhead | [docs/08](docs/08-controls.md#track-preview) |
-| Touch Cue | touch a playing deck's overview waveform to hear that point in the headphones, and set a hot cue there from a pad | [docs/08](docs/08-controls.md#touch-cue) |
 | Panel LEDs | PLAY / CUE / SYNC / KEY LOCK / VINYL / SLIP and FX LEDs mirror rbp's own LED state (blink included) | [docs/08](docs/08-controls.md) |
 | VU meters | master L/R + channel 1/2 live levels | [docs/08](docs/08-controls.md) |
 | Audio | master (XLR/RCA), headphones + cue, booth and built-in monitors on the JP21 8-channel codec | [docs/09](docs/09-audio.md) |

@@ -18,6 +18,7 @@ Documentation for the XDJ-RX3 `rb` → Denon SC Live 4 port.
 | 11 | [runtime-launcher](11-runtime-launcher.md) | launch sequence / systemd integration |
 | 12 | [troubleshooting](12-troubleshooting.md) | symptom → cause → fix |
 | 13 | [upgrade-5.0.4](13-upgrade-5.0.4.md) | 4.3.1 → Engine OS 5.0.4, root restore, player reinstall |
+| 14 | [using-the-extras](14-using-the-extras.md) | **start here as a user**: how to use the MOD menu, memory cues, hot cue countdown, SHIFT combos and the rest |
 
 The matching PrimeBox doc is the upstream reference for anything shared; links
 are in [03-port-plan.md](03-port-plan.md).
