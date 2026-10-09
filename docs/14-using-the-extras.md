@@ -59,11 +59,15 @@ MOD row **SKIP** turns the SEARCH `<` `>` buttons into a **16-beat jump**. Detai
 
 ## Touch Cue
 
-While a deck plays, **touch and hold its overview waveform** (the small full-track waveform in the deck panel at the bottom) to hear that point in the headphones. Slide to move the point, lift to stop. While holding, press a **pad** to set that hot cue at the previewed point. Turn it off with MOD row **TCUE**. Details: [08 — Touch Cue](08-controls.md#touch-cue).
+While a deck plays, **touch and hold its overview waveform** (the small full-track waveform in the deck panel at the bottom) to hear that point in the headphones. Slide to move the point, lift to stop. While holding, press a **pad** to set that hot cue at the previewed point. Turn it off with MOD row **TCUE**.
+
+![Touch Cue: the lime line in deck 1's overview is the point being heard](touch-cue.png) Details: [08 — Touch Cue](08-controls.md#touch-cue).
 
 ## Track Preview
 
-In the browse list, **touch a track's mini waveform** to hear it from that point in the headphones. A lime line shows the position. It needs MOD row **LINK** on (the default). Details: [08 — Track Preview](08-controls.md#track-preview).
+In the browse list, **touch a track's mini waveform** to hear it from that point in the headphones. A lime line shows the position. It needs MOD row **LINK** on (the default).
+
+![Track Preview: the lime line on the second row is the playhead](track-preview.png) Details: [08 — Track Preview](08-controls.md#track-preview).
 
 ## Safe to try
 

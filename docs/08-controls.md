@@ -57,6 +57,8 @@ A **MOD** tab at the top center of the screen opens this panel. It is taller tha
 
 ### Track Preview
 
+![Track Preview: the lime line is the playhead on the touched row](track-preview.png)
+
 Touch the mini waveform (PREVIEW column) of a browse or Tag List row: the track plays from that point, dragging seeks, and lifting stops. A lime playhead follows it along the waveform. It is audible in the headphones only, so turn the cue MIX knob toward CUE. The touch area is x 109 to 327 (Tag List: x 10 to 228), y 102 to 702, in 50 px rows. It needs the MOD **LINK** row ON, which is the RX3's LINK CUE button. The rest of this section is what `knobshim2` and the overlay add, because rbp does not do it on this port:
 
 * **Message-thread check.** `ui::PlayerPreview::loadPreview`, `setPreviewPosition` and `unloadPreview` return early when `PanelComPeerLinux::isOnMessageThread()` is true, and the startup patch at `0x3664b4` forces it true. A hook on `isOnMessageThread` answers false only to callers inside those three functions (by return address).
@@ -66,6 +68,8 @@ Touch the mini waveform (PREVIEW column) of a browse or Tag List row: the track 
 * **LINK.** rbp resets `MixerEngine::setPreviewChHeadphoneCue` to off at every start, and the SC Live 4 has no button for it, so the overlay re-applies the MOD setting about once a second.
 
 ### Touch Cue
+
+![Touch Cue: the lime line in deck 1's overview is the held point](touch-cue.png)
 
 On the CDJ-3000X you press a deck's waveform to listen to that point in the headphones. The RX3 firmware has nothing like it (its Needle Search jumps the deck, and only while paused), so it is built here from the preview player.
 
