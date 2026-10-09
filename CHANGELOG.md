@@ -6,7 +6,8 @@ Differences from [erhan-/rblive4](https://github.com/erhan-/rblive4), forked at 
 
 ### SEARCH < > beat-jump by the loop size
 
-* **MOD SKIP is now SEARCH or LOOP SIZE** (was SEARCH or 16 BEATS). With LOOP SIZE, SEARCH `<` `>` jump back / forward by the size the deck's loop encoder is set to: 128, 64, 32, 16, 8, 4, 2 or 1 beats (1/2 beat for smaller sizes). rbp's beat jump stops at 16, so 32 to 128 repeat it. See [docs/14](docs/14-using-the-extras.md#beat-jump-on-search--).
+* **MOD SKIP is now SEARCH or LOOP SIZE** (was SEARCH or 16 BEATS). With LOOP SIZE, SEARCH `<` `>` jump back / forward by the size the deck's loop encoder is set to: 128, 64, 32, 16, 8, 4, 2 or 1 beats (1/2 beat for smaller sizes). rbp's beat jump stops at 16, so 32 to 128 repeat it, waiting for each jump to land and sending it again if rbp drops it.
+* **The beat jump pad-mode button opens page 2 first** (BEAT JUMP 2: 1/2, 2, 4, 16 beats). Pressing it again goes to page 1. See [docs/14](docs/14-using-the-extras.md#beat-jump-on-search--).
 
 ### Memory cues on the deck buttons
 

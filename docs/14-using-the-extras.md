@@ -64,6 +64,10 @@ MOD row **SKIP** has two settings: **SEARCH** (the normal scan) and **LOOP SIZE*
 
 Sizes: 128, 64, 32, 16, 8, 4, 2, 1 beats. At 1/2 beat and smaller the jump is 1/2 a beat. Details: [08 — SHIFT](08-controls.md#shift).
 
+## Beat jump pads
+
+Press the deck's **SLICER** pad-mode button (the beat jump mode). It opens **BEAT JUMP 2** first (pads jump 1/2, 2, 4 and 16 beats). Press it again for **BEAT JUMP** page 1 (1, 2, 4 and 8 beats); each press flips the page.
+
 ## Touch Cue
 
 While a deck plays, **touch and hold its overview waveform** (the small full-track waveform in the deck panel at the bottom) to hear that point in the headphones. Slide to move the point, lift to stop. While holding, press a **pad** to set that hot cue at the previewed point. Turn it off with MOD row **TCUE**.

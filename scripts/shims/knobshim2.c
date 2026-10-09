@@ -739,25 +739,64 @@ static void key_tap(int key)
 extern int rb_tcue_pad(int ch, int note, int on) __attribute__((weak));   /* overlay_playmode.c */
 
 static int g_aloop_idx[2];             /* the beat-loop encoder's size, defined below */
+static unsigned char *live_innards(int deck);   /* the deck's live ui::PlayerInnards, defined below */
+
+#define PAD_MODE_OFF         0x74      /* PlayerInnards pad mode (same as PLAYERINNARDS_MODE_OFF below) */
+#define PAD_MODE_BEATJUMP    3         /* 0 hot cue, 1 auto loop, 2 slip loop, 3 beat jump */
 
 /* MOD SKIP = LOOP SIZE: jump the beat-loop encoder's size (128 ... 1/32 beats) back or forward.  rbp's beat
  * jump types go 1/2 .. 16 beats (type 1 = back 1/2, then back / forward pairs of 1, 2, 4, 8, 16), so smaller
  * sizes use 1/2 and larger ones repeat the 16. */
+struct skip_job { int deck, type, reps; };
+
+static void *skip_thread(void *arg)
+{
+     struct skip_job j = *(struct skip_job *)arg;
+     int k, tries, w, moved = 1;
+     free(arg);
+     /* rbp drops a jump now and then (also one issued while the last is landing), so each repeat waits for the
+      * playhead to move (Pub_Total_GetNowPlayTime) and is sent again if it did not.  At the start or end of the
+      * track nothing moves, and the rest are skipped. */
+     for (k = 0; k < j.reps && moved; k++) {
+          int before = ((int (*)(int))0x000e33c8)(j.deck);
+          for (moved = 0, tries = 0; tries < 4 && !moved; tries++) {
+               ((void (*)(void *, int, int))0x00049ae0)(NULL, j.deck, j.type);
+               for (w = 0; w < 120 && !moved; w++) {
+                    usleep(10000);
+                    moved = ((int (*)(int))0x000e33c8)(j.deck) != before;
+               }
+          }
+          usleep(20000);
+     }
+     return NULL;
+}
+
 static void skip_jump(int deck, int fwd)
 {
      static const unsigned char beats[13] = { 128, 64, 32, 16, 8, 4, 2, 1, 0, 0, 0, 0, 0 };   /* 0 = 1/2 or less */
      int idx = g_aloop_idx[deck] < 0 ? 3 : g_aloop_idx[deck], n = beats[idx], reps = 1, type = 1, k;
+     struct skip_job *j;
+     pthread_t t;
      if (n > 16) {
           type = 11;
           reps = n / 16;
      } else if (n)
           for (type = 3, k = n; k > 1; k >>= 1)
                type += 2;
-     for (k = 0; k < reps; k++) {
-          if (k)
-               usleep(40000);        /* a jump issued while the last is still landing can be dropped */
+     if (reps == 1) {
           ((void (*)(void *, int, int))0x00049ae0)(NULL, deck, type + fwd);
+          return;
      }
+     j = malloc(sizeof(*j));       /* the repeats run on their own thread so the controls stay responsive */
+     if (!j)
+          return;
+     j->deck = deck;
+     j->type = type + fwd;
+     j->reps = reps;
+     if (pthread_create(&t, NULL, skip_thread, j) == 0)
+          pthread_detach(t);
+     else
+          free(j);
 }
 
 static void handle_note(int ch, int note, int on)
@@ -791,6 +830,27 @@ static void handle_note(int ch, int note, int on)
                send_rx_key(*k, OP_RELEASE, ch - 3, 0);
                *k = 0;
                return;
+          }
+     }
+     /* The pad mode BEAT JUMP button (note 14) opens beat jump page 2 first; pressing it again goes to page 1.
+      * rbp opens page 1 and a second press flips the page (and redraws it), so when the press switched the
+      * mode, press once more as soon as the mode has changed.  Writing the page byte instead left the pads
+      * showing the old page. */
+     if ((ch == 4 || ch == 5) && note == 14) {
+          static unsigned char entered[2];
+          unsigned char *p = live_innards(ch - 4);
+          if (on && p)
+               entered[ch - 4] = p[PAD_MODE_OFF] != PAD_MODE_BEATJUMP;
+          else if (!on && entered[ch - 4]) {
+               int w;
+               entered[ch - 4] = 0;
+               send_rx_key(K_BEATJUMP, OP_RELEASE, ch - 3, 0);
+               for (w = 0; p && w < 40 && p[PAD_MODE_OFF] != PAD_MODE_BEATJUMP; w++)
+                    usleep(5000);
+               if (p && p[PAD_MODE_OFF] == PAD_MODE_BEATJUMP) {
+                    send_rx_key(K_BEATJUMP, OP_PRESS, ch - 3, 0);
+                    send_rx_key(K_BEATJUMP, OP_RELEASE, ch - 3, 0);
+               }
           }
      }
      if (rb_tcue_pad && (!shift_down || !on) && rb_tcue_pad(ch, note, on))
@@ -1608,6 +1668,18 @@ static void scan_plinn(void)
      if (!g_plinn[0] || !g_plinn[1])
           klog("knobshim2: PlayerInnards scan: deck1=%p deck2=%p\n",
                g_plinn[0], g_plinn[1]);
+}
+
+/* The scan above can land on a stale copy of the object, so ask the deck's ui::Player (found by the LED-check
+ * hook) for its innards instead: PlayerSkeleton's virtual at +36, the one PlayerSkeleton::onKey calls. */
+extern void *rb_ui_player(int ch);
+static unsigned char *live_innards(int deck)
+{
+     void *pl = rb_ui_player(deck + 1), *in;
+     if (!pl)
+          return NULL;
+     in = ((void *(*)(void *))(*(void ***)pl)[9])(pl);
+     return in && *(volatile unsigned int *)in == PVTABLE_PLAYERINNARDS ? in : NULL;
 }
 
 static void *plinn(int deck)

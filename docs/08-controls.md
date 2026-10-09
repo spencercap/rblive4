@@ -152,6 +152,7 @@ LIGHTING is the unused button under MENU. It has no Engine OS action in this por
 | Pad mode CUES/STEMS | note 11 | `0x4113` K_HOTCUE |
 | Pad mode LOOPS/AUTO | note 12 | `0x4114` K_ALOOP |
 | Pad mode ROLL/SAMPLER | note 13 | `0x4115` K_SLIPLOOP |
+| Pad mode SLICER | note 14 | `0x4116` K_BEATJUMP, **page 2 first**: entering beat jump from another pad mode sends the key a second time, so BEAT JUMP 2 (1/2, 2, 4, 16) opens first and the next press goes to BEAT JUMP (1, 2, 4, 8). rbp flips its page on every press of the key while already in beat jump |
 | Pads 1–8 | notes 15–22 | `0x4117`–`0x411e` |
 | Pitch bend − / + | notes 29 / 30 | `0x4107` TEMPO RANGE / `0x4108` MT |
 | Jog touch | note 33 | `0x4306` |
@@ -500,7 +501,7 @@ Controls the SC Live 4 has that the RX3 does not (or vice versa):
 | **SHIFT + hot cue pad** (note 28 held, pad notes 15 to 22) | `0x4103` K_SHIFT press, the pad key, release, release | Deletes that hot cue, as on the RX3. rbp's own pad handler does it (engine, database, LED). SHIFT is not otherwise forwarded to rbp: it is sent only around a pad press. |
 | **TIME push + turn** | `0x4490` / `0x4491` | RX3's BEAT `<` / `>` buttons, absent on the SC Live 4 |
 | **SHIFT + jog wheel** (note 28 held) | `DjEngineIF::startScan(deck, level, reverse)` | Search, as on the RX3. rbp scans only once scanning has started, and the SC Live 4 never starts it, so the shim drives it: the wheel speed (MOD JOG percent included, times `SCAN_SCALE` 0.25 because this wheel's speed estimate runs high) picks rbp's own levels 1 to 5 at 0.15 / 0.5 / 1.0 / 1.8 / 2.3. Scanning stops when the wheel idles or SHIFT is released. |
-| **SEARCH < >** (notes 6 / 7) with MOD **SKIP** = LOOP SIZE | `DjEngineIF::playBeatJump(deck, type)` | Back / forward by the loop encoder's size through rbp's own beat jump, which keeps its cue state consistent (a bare seek left CUE returning to the old cue). rbp's jump types stop at 16 beats (type 1 = back 1/2, 2 = forward 1/2, then back / forward pairs of 1, 2, 4, 8, 16 = types 3 to 12), so 32, 64 and 128 beats repeat the 16-beat jump 2, 4 and 8 times, 40 ms apart. The size is the shim's own `g_aloop_idx`, which the encoder changes even while no loop runs (default 16). The press is not passed on as a search key. |
+| **SEARCH < >** (notes 6 / 7) with MOD **SKIP** = LOOP SIZE | `DjEngineIF::playBeatJump(deck, type)` | Back / forward by the loop encoder's size through rbp's own beat jump, which keeps its cue state consistent (a bare seek left CUE returning to the old cue). rbp's jump types stop at 16 beats (type 1 = back 1/2, 2 = forward 1/2, then back / forward pairs of 1, 2, 4, 8, 16 = types 3 to 12), so 32, 64 and 128 beats repeat the 16-beat jump 2, 4 and 8 times on a separate thread. rbp drops a jump now and then, so each repeat waits for the playhead to move (`Pub_Total_GetNowPlayTime`) and is sent again, up to 4 times, before the rest are skipped (as at the start or end of the track). The size is the shim's own `g_aloop_idx`, which the encoder changes even while no loop runs (default 16). The press is not passed on as a search key. |
 
 The SYNC hold sends nothing until the threshold is reached; sending the press
 early and suppressing the release would leave rbp with a stuck SYNC press and
