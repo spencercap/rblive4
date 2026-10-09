@@ -41,14 +41,16 @@ The countdown turns red in the last 16 beats (4 beats in BEATS mode). It shows `
 
 ## My Tags in the track INFO panel
 
-Open the track **INFO** panel (the **INFO** button, top right of the screen). The right half, where the artwork would be, lists **every My Tag** (the tags you set in rekordbox), grouped by category. The loaded track's tags are **orange**; the rest are grey. The tags are read from the stick, so they need the rekordbox export that includes tags.
+Open the track **INFO** panel (the **INFO** button, top right of the screen). The right half, where the artwork would be, lists **every My Tag** (the tags you set in rekordbox) as a button, grouped by category. The loaded track's tags are **orange**; the rest are grey.
 
 ![My Tags in the INFO panel](my-tags.png)
 
-* **Turn it off or on** with the **TAGS ON / OFF** button at the top right of the list, or with MOD row **TAGS**. They are the same setting.
+* **Tap a tag to tag or untag the loaded track.** The change is written to the stick (the header shows SAVING, then it lights or dims). If it says NOT SAVED, the write failed and nothing changed.
+* **Drag the list up or down to scroll.**
+* **Turn the list off or on** with the **TAGS ON / OFF** button at the top right of the list, or with MOD row **TAGS**. They are the same setting.
 * The MOD menu stays on top; the list moves to its right while it is open.
-* Tags are shown in capitals.
-* It follows deck 1's track (deck 2's if deck 1 is empty).
+* Tags are shown in capitals. It follows deck 1's track (deck 2's if deck 1 is empty).
+* **Careful:** this edits your stick's library. A copy of the tag file is saved on the unit before the first change of each run (`/data/rbx3-run/mytags-backup/`). rekordbox on your computer does not read these changes, and its next export of the stick replaces them.
 
 Details: [08 — My Tags](08-controls.md#my-tags-in-the-info-panel).
 

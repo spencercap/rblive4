@@ -354,6 +354,11 @@ __attribute__((constructor)) static void overlay_shm_init(void)
     ov_shm->pan_w = PAN_W;
     ov_shm->pan_h = PAN_VIS_H;
     ov_shm->open = 0;
+    /* what the last run left in the My Tags fields means nothing now */
+    ov_shm->info_track[0] = ov_shm->info_track[1] = 0;
+    ov_shm->info_tags_n = ov_shm->info_tags_track = 0;
+    ov_shm->tag_ack_seq = ov_shm->tag_req_seq;
+    ov_shm->tag_ack_err = 0;
 }
 
 static int in_rect(int x, int y, int rx, int ry, int rw, int rh)
@@ -1520,12 +1525,13 @@ static void count_label_paint(unsigned char *base)
 
 /* ---- My Tags in the track INFO panel ------------------------------------------------------------------------
  * The panel's right side shows the artwork, which this port never has.  While the panel is open (its INFO button,
- * top right, is lit) the overlay covers that area with every My Tag on the stick, grouped by category, with the
- * loaded track's tags in colour.  The stick's exportExt.pdb is a DeviceSQL file whose type 3 table holds the tags
- * and categories (rows start 80 06; category id at +12, position at +16, tag id at +20, name at +32 with its
- * length byte at +31 = 2 * length + 3) and whose type 4 table holds (track id at +4, tag id at +8) pairs.
- * knobshim2 writes the loaded track's id to info_track[].  rbp redraws nothing in this area while the panel
- * stays open, so each fb page is painted once per change, not every frame. */
+ * top right, is lit) the overlay covers that area with a scrolling list of every My Tag on the stick, grouped by
+ * category, one big button each; the loaded track's tags are lit, and tapping a button adds or removes that tag.
+ * Names and categories come from the stick's exportExt.pdb, a DeviceSQL file whose type 3 table holds them (rows
+ * start 80 06; category id at +12, position at +16, tag id at +20, name at +32 with its length byte at +31 =
+ * 2 * length + 3).  Which tags the track has comes from rbp's own database through knobshim2 (info_tags[]), and an
+ * edit is a request to it (tag_req_*), so the file is written by rbp.  rbp redraws nothing in this area while the
+ * panel stays open, so each fb page is painted once per change, not every frame. */
 #define TAG_FILE1 "/media/usb1/sda1/PIONEER/rekordbox/exportExt.pdb"
 #define TAG_FILE2 "/media/usb2/sda1/PIONEER/rekordbox/exportExt.pdb"
 #define TAG_MAX 160
@@ -1534,29 +1540,37 @@ static void count_label_paint(unsigned char *base)
 #define TAGS_Y 50
 #define TAGS_W 542
 #define TAGS_H 380
-#define TAGS_HEAD 56               /* header row height */
-#define TAG_COL_W 108              /* 18 characters of the 6 px wide text */
+#define TAGS_HEAD 56               /* header row height: title and the ON / OFF button */
 #define TOG_W 116
 #define TOG_H 30
 #define TOG_X (TAGS_X + TAGS_W - TOG_W - 12)
 #define TOG_Y (TAGS_Y + 10)
+#define TG_BTN_H (2 * TOG_H)       /* a tag button is twice as tall as the TAGS ON button */
+#define TG_GAP 8
+#define TG_HDR_H 36                /* a category title row */
+#define TG_PAD 14
+#define TG_VIEW_Y (TAGS_Y + TAGS_HEAD)
+#define TG_VIEW_H (TAGS_H - TAGS_HEAD)
 #define COL_INFO_BG 0xff313031u
 #define COL_INFO_ON 0xff007de7u    /* the INFO button when the panel is open */
-#define COL_TAG_ON  0xffff8a1cu    /* a tag the loaded track has */
-#define COL_TAG_OFF 0xff7a797au    /* a tag it does not */
+#define COL_TAG_ON  0xffff8a1cu    /* a tag the loaded track has: text */
+#define COL_TAG_BGON 0xff4a3416u   /* ... and its button */
+#define COL_TAG_OFF 0xffa3a3a3u    /* a tag it does not have */
 
 struct tagrec {
     unsigned id, cat, pos;
     char name[TAG_LEN];
-    unsigned char cat_row, active;
+    unsigned char cat_row;
 };
 
 static struct tagrec tag_rec[TAG_MAX];
 static unsigned char tag_line[TAG_MAX];   /* display order: indexes into tag_rec */
 static int tag_n, tag_lines;
-static unsigned tag_for, tag_ok, tag_ver;  /* track id the list is for; 1 when the file had data */
+static unsigned tag_ok, tag_ver;           /* 1 when the file had data; bumped on every (re)load */
 static long tag_mtime;
+static unsigned file_active[64], file_active_n, file_active_for;   /* the track's tags as the stick's file has them */
 static int tags_lit;                       /* the INFO panel is open, as of the last frame */
+static int tg_scroll;                      /* list scroll, px */
 
 static unsigned rd32(const unsigned char *p)
 {
@@ -1577,7 +1591,7 @@ static int page_rows(const unsigned char *pg, int ps, int *off, int max)
     return r;
 }
 
-/* Display order: each category (by position) as a header line, then its tags (by position). */
+/* Display order: each category (by position) as a title line, then its tags (by position). */
 static void tags_order(void)
 {
     int c, i, j, first;
@@ -1609,16 +1623,16 @@ static void tags_order(void)
     }
 }
 
+/* Every tag and category on the stick (the type 3 table of exportExt.pdb), and the tags of `track` as the file
+ * has them (the type 4 table), for when rbp's database cannot be read. */
 static void tags_load(unsigned track)
 {
     static unsigned char buf[2 << 20];
-    unsigned active[64], active_n = 0;
     struct stat st;
-    int fd, len, ps, tables, t, i, k, pass;
+    int fd, len, ps, tables, t, i;
     const char *file = TAG_FILE1;
     tag_n = 0;
     tag_lines = 0;
-    tag_for = track;
     tag_ok = 0;
     tag_ver++;
     if (stat(file, &st) != 0 && stat(file = TAG_FILE2, &st) != 0)
@@ -1636,71 +1650,130 @@ static void tags_load(unsigned track)
     if (ps != 4096 || tables < 1 || tables > 20 || 28 + tables * 16 > len)
         return;
     tag_ok = 1;
-    /* pass 0: the tag ids of this track (table type 4); pass 1: every tag and category (type 3) */
-    for (pass = 0; pass < 2; pass++)
-        for (t = 0; t < tables; t++) {
-            unsigned type = rd32(buf + 28 + t * 16), pgn = rd32(buf + 36 + t * 16), last = rd32(buf + 40 + t * 16);
-            int guard;
-            if (type != (pass ? 3u : 4u))
-                continue;
-            for (guard = 0; guard < 64 && (pgn + 1) * (unsigned)ps <= (unsigned)len; guard++) {
-                const unsigned char *pg = buf + pgn * ps;
-                int off[256], n = page_rows(pg, ps, off, 256);
-                for (i = 0; i < n; i++) {
-                    const unsigned char *r = pg + off[i];
-                    if (off[i] + 12 > ps)
-                        continue;
-                    if (!pass) {
-                        if (track && rd32(r + 4) == track && active_n < 64)
-                            active[active_n++] = rd32(r + 8);
-                        continue;
-                    }
-                    if (off[i] + 32 + 2 * TAG_LEN > ps || r[0] != 0x80 || r[1] != 0x06 || r[28] != 3)
-                        continue;
-                    {
-                        unsigned id = rd32(r + 20);
-                        int l = (r[31] - 3) / 2, j, dup = 0;
-                        if (l < 1 || l >= TAG_LEN)
-                            continue;
-                        for (j = 0; j < tag_n; j++)
-                            dup |= tag_rec[j].id == id;
-                        if (dup || tag_n >= TAG_MAX)
-                            continue;
-                        tag_rec[tag_n].id = id;
-                        tag_rec[tag_n].cat = rd32(r + 12);
-                        tag_rec[tag_n].pos = rd32(r + 16);
-                        tag_rec[tag_n].cat_row = rd32(r + 12) == 0;
-                        tag_rec[tag_n].active = 0;
-                        memcpy(tag_rec[tag_n].name, r + 32, l);
-                        tag_rec[tag_n].name[l] = 0;
-                        for (k = 0; k < (int)active_n; k++)
-                            tag_rec[tag_n].active |= active[k] == id;
-                        tag_n++;
-                    }
-                }
-                if (pgn == last)
-                    break;
-                pgn = rd32(pg + 12);
-            }
+    file_active_n = 0;
+    file_active_for = track;
+    for (t = 0; track && t < tables; t++) {
+        unsigned type = rd32(buf + 28 + t * 16), pgn = rd32(buf + 36 + t * 16), last = rd32(buf + 40 + t * 16);
+        int guard;
+        if (type != 4)
+            continue;
+        for (guard = 0; guard < 64 && (pgn + 1) * (unsigned)ps <= (unsigned)len; guard++) {
+            const unsigned char *pg = buf + pgn * ps;
+            int off[256], n = page_rows(pg, ps, off, 256);
+            for (i = 0; i < n; i++)
+                if (off[i] + 12 <= ps && rd32(pg + off[i] + 4) == track && file_active_n < 64)
+                    file_active[file_active_n++] = rd32(pg + off[i] + 8);
+            if (pgn == last)
+                break;
+            pgn = rd32(pg + 12);
         }
+    }
+    for (t = 0; t < tables; t++) {
+        unsigned type = rd32(buf + 28 + t * 16), pgn = rd32(buf + 36 + t * 16), last = rd32(buf + 40 + t * 16);
+        int guard;
+        if (type != 3)
+            continue;
+        for (guard = 0; guard < 64 && (pgn + 1) * (unsigned)ps <= (unsigned)len; guard++) {
+            const unsigned char *pg = buf + pgn * ps;
+            int off[256], n = page_rows(pg, ps, off, 256);
+            for (i = 0; i < n; i++) {
+                const unsigned char *r = pg + off[i];
+                unsigned id;
+                int l, j, dup = 0;
+                if (off[i] + 32 + 2 * TAG_LEN > ps || r[0] != 0x80 || r[1] != 0x06 || r[28] != 3)
+                    continue;
+                id = rd32(r + 20);
+                l = (r[31] - 3) / 2;
+                if (l < 1 || l >= TAG_LEN)
+                    continue;
+                for (j = 0; j < tag_n; j++)
+                    dup |= tag_rec[j].id == id;
+                if (dup || tag_n >= TAG_MAX)
+                    continue;
+                tag_rec[tag_n].id = id;
+                tag_rec[tag_n].cat = rd32(r + 12);
+                tag_rec[tag_n].pos = rd32(r + 16);
+                tag_rec[tag_n].cat_row = rd32(r + 12) == 0;
+                memcpy(tag_rec[tag_n].name, r + 32, l);
+                tag_rec[tag_n].name[l] = 0;
+                tag_n++;
+            }
+            if (pgn == last)
+                break;
+            pgn = rd32(pg + 12);
+        }
+    }
     tags_order();
 }
 
-/* 5x7 glyphs drawn sx wide and sy tall per pixel */
-static void draw_text_sc(unsigned char *base, int x, int y, const char *s, unsigned color, int sx, int sy)
+/* Where the list sits: it starts right of the MOD menu while that is open. */
+static void tags_area(int *x0, int *w)
 {
-    for (; *s; s++) {
-        const unsigned char *g = glyph(*s);
-        int row, col, a, b;
-        if (g)
-            for (row = 0; row < 7; row++)
-                for (col = 0; col < 5; col++)
-                    if (g[row] & (0x10 >> col))
-                        for (b = 0; b < sy; b++)
-                            for (a = 0; a < sx; a++)
-                                put_visual(base, x + col * sx + a, y + row * sy + b, color);
-        x += 6 * sx;
+    *x0 = ov_is_open() ? PAN_X + PAN_W : TAGS_X;
+    *w = TAGS_X + TAGS_W - *x0;
+}
+
+/* Position of line i (a title or a tag button) in list coordinates; returns the list's total height. */
+static int tags_line_rect(int i, int w, int *x, int *y, int *bw, int *bh)
+{
+    int k, cy = 0, col = 0, cw = (w - 2 * TG_PAD - TG_GAP) / 2;
+    for (k = 0; k < tag_lines; k++) {
+        if (tag_rec[tag_line[k]].cat_row) {
+            if (col)
+                cy += TG_BTN_H + TG_GAP;
+            col = 0;
+            if (k == i) {
+                *x = TG_PAD;
+                *y = cy;
+                *bw = w - 2 * TG_PAD;
+                *bh = TG_HDR_H;
+            }
+            cy += TG_HDR_H + TG_GAP;
+        } else {
+            if (k == i) {
+                *x = TG_PAD + col * (cw + TG_GAP);
+                *y = cy;
+                *bw = cw;
+                *bh = TG_BTN_H;
+            }
+            if (col) {
+                col = 0;
+                cy += TG_BTN_H + TG_GAP;
+            } else
+                col = 1;
+        }
     }
+    return cy + (col ? TG_BTN_H + TG_GAP : 0);
+}
+
+static int tags_max_scroll(int w)
+{
+    int x, y, bw, bh, m = tags_line_rect(-1, w, &x, &y, &bw, &bh) - TG_VIEW_H;
+    return m > 0 ? m : 0;
+}
+
+static unsigned tags_track(void)
+{
+    return ov_shm ? (ov_shm->info_track[0] ? ov_shm->info_track[0] : ov_shm->info_track[1]) : 0;
+}
+
+static int tag_is_active(unsigned id)
+{
+    unsigned i;
+    if (!ov_shm)
+        return 0;
+    if (ov_shm->info_tags_track == tags_track() && tags_track()) {   /* from rbp's database, the live truth */
+        for (i = 0; i < ov_shm->info_tags_n && i < 64; i++)
+            if (ov_shm->info_tags[i] == id)
+                return 1;
+        return 0;
+    }
+    if (file_active_for != tags_track())
+        return 0;
+    for (i = 0; i < file_active_n; i++)
+        if (file_active[i] == id)
+            return 1;
+    return 0;
 }
 
 static int tags_btn_hit(int vx, int vy)
@@ -1710,19 +1783,88 @@ static int tags_btn_hit(int vx, int vy)
     return in_rect(vx, vy, TOG_X, TOG_Y, TOG_W, TOG_H);
 }
 
+/* The tag button under (vx, vy), as an index into tag_line, or -1. */
+static int tags_hit(int vx, int vy)
+{
+    int x0, w, i, x, y, bw, bh;
+    tags_area(&x0, &w);
+    if (!in_rect(vx, vy, x0, TG_VIEW_Y, w, TG_VIEW_H))
+        return -1;
+    for (i = 0; i < tag_lines; i++) {
+        if (tag_rec[tag_line[i]].cat_row)
+            continue;
+        tags_line_rect(i, w, &x, &y, &bw, &bh);
+        if (in_rect(vx, vy, x0 + x, TG_VIEW_Y + y - tg_scroll, bw, bh))
+            return i;
+    }
+    return -1;
+}
+
+static void tag_request(unsigned tag, int on)
+{
+    unsigned track = tags_track();
+    if (!ov_shm || !track || ov_shm->tag_req_seq != ov_shm->tag_ack_seq)
+        return;                    /* nothing loaded, or the last edit is still being written */
+    ov_shm->tag_req_track = track;
+    ov_shm->tag_req_tag = tag;
+    ov_shm->tag_req_on = on;
+    __sync_synchronize();
+    ov_shm->tag_req_seq++;
+}
+
+/* The list's own touches: a drag scrolls it, a tap on a button adds or removes that tag (on release). */
+static int tags_touch(int down, int fresh, int vx, int vy)
+{
+    static int pressed, dragging, press_y, press_x, press_scroll;
+    int x0, w, max;
+    if (!tags_lit || !tag_ok || !ov_shm || (ov_shm->info_cfg & INFO_NOTAGS))
+        return 0;
+    tags_area(&x0, &w);
+    max = tags_max_scroll(w);
+    if (fresh && !(ov_is_open() && in_rect(vx, vy, PAN_X, PAN_Y, PAN_W, PAN_VIS_H)) &&
+        in_rect(vx, vy, x0, TG_VIEW_Y, w, TG_VIEW_H)) {
+        pressed = 1;
+        dragging = 0;
+        press_x = vx;
+        press_y = vy;
+        press_scroll = tg_scroll;
+        ov_grab = 1;
+        return 1;
+    }
+    if (!pressed)
+        return 0;
+    if (down) {
+        int d = vy - press_y, sc;
+        if (dragging || d > 8 || d < -8) {
+            dragging = 1;
+            sc = press_scroll - d;
+            tg_scroll = sc < 0 ? 0 : sc > max ? max : sc;
+        }
+        return 1;
+    }
+    pressed = 0;
+    ov_grab = 0;
+    if (!dragging) {
+        int i = tags_hit(press_x, press_y);
+        if (i >= 0) {
+            unsigned id = tag_rec[tag_line[i]].id;
+            tag_request(id, !tag_is_active(id));
+        }
+    }
+    return 1;
+}
+
 /* Paint once per fb page and change; the driver leaves our pixels alone while rbp's do not change.  ov_repaint
  * covers the full redraws that kick_redraw forces. */
 static void tags_paint(unsigned char *base, int page)
 {
     static unsigned last[3];
     static int last_stat_ms;
-    unsigned track, c, h;
-    int i, x0, w, ncol, rows, pitch, off, open = ov_is_open(), now = (int)mono_ms(), lit;
-    char name[TAG_LEN];
+    unsigned c, h, tver, tn, pend, err;
+    int i, x0, w, open = ov_is_open(), now = (int)mono_ms(), lit, max;
     if (!ov_shm)
         return;
     c = ov_shm->info_cfg;
-    track = ov_shm->info_track[0] ? ov_shm->info_track[0] : ov_shm->info_track[1];
     /* the INFO button is lit while the panel is open */
     lit = (*((unsigned *)(base + (unsigned)(1279 - 1200) * fb_pitch) + 24) & 0xffffff) == (COL_INFO_ON & 0xffffff);
     if (!lit) {
@@ -1734,27 +1876,38 @@ static void tags_paint(unsigned char *base, int page)
         return;
     }
     tags_lit = 1;
-    if (track != tag_for) {
-        tags_load(track);
-    } else if (now - last_stat_ms > 2000) {
+    tn = tags_track();
+    if ((!tag_n && !tag_ok && !last_stat_ms) || tn != file_active_for)
+        tags_load(tn);
+    if (now - last_stat_ms > 2000) {
         struct stat st;
-        last_stat_ms = now;
+        last_stat_ms = now ? now : 1;
         if (stat(TAG_FILE1, &st) == 0 && (long)st.st_mtime != tag_mtime)
-            tags_load(track);
+            tags_load(tn);
     }
+    tags_area(&x0, &w);
+    max = tags_max_scroll(w);
+    if (tg_scroll > max)
+        tg_scroll = max;
+    pend = ov_shm->tag_req_seq != ov_shm->tag_ack_seq;
+    err = ov_shm->tag_ack_err;
+    tver = ov_shm->info_tags_ver;
+    tn = tags_track();
     h = 2166136261u;
     h = hash_bytes(h, &tag_ver, sizeof(tag_ver));
-    h = hash_bytes(h, &track, sizeof(track));
+    h = hash_bytes(h, &tver, sizeof(tver));
+    h = hash_bytes(h, &tn, sizeof(tn));
     h = hash_bytes(h, &open, sizeof(open));
+    h = hash_bytes(h, &tg_scroll, sizeof(tg_scroll));
+    h = hash_bytes(h, &pend, sizeof(pend));
+    h = hash_bytes(h, &err, sizeof(err));
     c &= INFO_NOTAGS;
     h = hash_bytes(h, &c, sizeof(c));
     if (h == last[page] && !ov_repaint)
         return;
-    if (last[page] && ((h != last[page]) && c))
+    if (last[page] && h != last[page] && c)
         kick_redraw();             /* switching the list off: give the area back */
     last[page] = h;
-    x0 = open ? PAN_X + PAN_W : TAGS_X;
-    w = TAGS_X + TAGS_W - x0;
     if (c) {                       /* list off: just the button, over rbp's own artwork area */
         fill_visual(base, TOG_X, TOG_Y, TOG_W, TOG_H, COL_BTN);
         draw_text_centered(base, TOG_X, TOG_Y, TOG_W, TOG_H, "TAGS OFF", COL_TEXT);
@@ -1763,31 +1916,47 @@ static void tags_paint(unsigned char *base, int page)
     if (!tag_ok)
         return;                    /* no tag file: leave the artwork */
     fill_visual(base, x0, TAGS_Y, w, TAGS_H, COL_INFO_BG);
-    draw_text(base, x0 + 14, TAGS_Y + 18, "MY TAGS", COL_TITLE);
+    draw_text(base, x0 + TG_PAD, TAGS_Y + 18, "MY TAGS", COL_TITLE);
+    if (pend)
+        draw_text(base, x0 + TG_PAD + 110, TAGS_Y + 18, "SAVING", COL_TAG_ON);
+    else if (err)
+        draw_text(base, x0 + TG_PAD + 110, TAGS_Y + 18, "NOT SAVED", 0xffff4d4du);
     fill_visual(base, TOG_X, TOG_Y, TOG_W, TOG_H, COL_ON);
     draw_text_centered(base, TOG_X, TOG_Y, TOG_W, TOG_H, "TAGS ON", COL_TEXT);
-    fill_visual(base, x0 + 14, TAGS_Y + 46, w - 28, 2, COL_EDGE);
+    fill_visual(base, x0 + TG_PAD, TAGS_Y + 46, w - 2 * TG_PAD, 2, COL_EDGE);
     if (!tag_lines) {
-        draw_text(base, x0 + 14, TAGS_Y + 70, "NO TAGS", COL_TAG_OFF);
+        draw_text(base, x0 + TG_PAD, TG_VIEW_Y + 16, "NO TAGS ON THIS STICK", COL_TAG_OFF);
         return;
     }
-    ncol = (w - 24) / TAG_COL_W;
-    if (ncol < 1)
-        ncol = 1;
-    rows = (tag_lines + ncol - 1) / ncol;
-    pitch = (TAGS_H - TAGS_HEAD - 8) / rows;
-    if (pitch > 22)
-        pitch = 22;
-    for (i = 0; i < tag_lines && pitch >= 15; i++) {
+    clip_y0 = TG_VIEW_Y;
+    clip_y1 = TG_VIEW_Y + TG_VIEW_H;
+    for (i = 0; i < tag_lines; i++) {
         const struct tagrec *r = &tag_rec[tag_line[i]];
-        int j;
+        int x, y, bw, bh, j, on;
+        char name[TAG_LEN];
+        tags_line_rect(i, w, &x, &y, &bw, &bh);
+        x += x0;
+        y += TG_VIEW_Y - tg_scroll;
+        if (y + bh <= TG_VIEW_Y || y >= TG_VIEW_Y + TG_VIEW_H)
+            continue;
         for (j = 0; r->name[j] && j < TAG_LEN - 1; j++)
             name[j] = r->name[j] >= 'a' && r->name[j] <= 'z' ? r->name[j] - 32 : r->name[j];
         name[j] = 0;
-        off = (i / rows) * TAG_COL_W;
-        draw_text_sc(base, x0 + 14 + off, TAGS_Y + TAGS_HEAD + (i % rows) * pitch, name,
-                     r->cat_row ? COL_TITLE : r->active ? COL_TAG_ON : COL_TAG_OFF, 1, 2);
+        if (r->cat_row) {
+            draw_text(base, x, y + (bh - 14) / 2, name, COL_TITLE);
+            fill_visual(base, x, y + bh - 2, bw, 2, COL_EDGE);
+            continue;
+        }
+        on = tag_is_active(r->id);
+        fill_visual(base, x, y, bw, bh, on ? COL_TAG_BGON : COL_BTN);
+        if (on)
+            fill_visual(base, x, y, 5, bh, COL_TAG_ON);
+        draw_text_centered(base, x, y, bw, bh, name, on ? COL_TAG_ON : COL_TAG_OFF);
     }
+    if (max > 0)                   /* where the view sits in the list */
+        fill_visual(base, x0 + w - 6, TG_VIEW_Y + tg_scroll * (TG_VIEW_H - 40) / max, 3, 40, COL_TITLE);
+    clip_y0 = 0;
+    clip_y1 = 800;
 }
 
 static void set_beat_mode(int m)
@@ -2433,6 +2602,9 @@ int overlay_touch(int down, int was_down, int lx, int ly)
             fresh = 1;
         }
     }
+
+    if (tags_touch(down, fresh, vx, vy))     /* the My Tags list: drag to scroll, tap a button to tag or untag */
+        return 1;
 
     if (fresh && tags_btn_hit(vx, vy)) {     /* the TAGS button at the top of the INFO panel's tag area */
         request_info(INFO_NOTAGS);

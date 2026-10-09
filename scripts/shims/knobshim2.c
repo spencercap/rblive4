@@ -3146,7 +3146,161 @@ static void deck_update_hook(int deck)
                     deck_obj_hide(h, deck_row[r][i] + 39 * deck);
 }
 
-/* The overlay's My Tags view needs the rekordbox id of each deck's track; ask rbp twice a second. */
+/* ---- My Tags: read and edit through rbp's own database ----------------------------------------------------
+ * rbp keeps the stick's exportExt.pdb in its embedded "edb" engine.  The table djdbexSongMyTag has one row per
+ * (My Tag id, track id) pair (plus two unused columns), with two indexes; rbp itself only reads it.  Editing goes through the same
+ * edb_dyn_* calls rbp's playlist and rating code use, inside a transaction, so rbp writes the file and a failed
+ * edit rolls back.  The edit replaces the track's rows: delete all of them by the track index, insert the new set. */
+#define EDB_SELECT      0x003dd464UL  /* edb_dyn_Select(err*, table, index, 0, 0, 0, op, n, vals) -> rowset */
+#define EDB_NEXTROW     0x003ddd78UL  /* edb_dyn_GetNextRow(rowset, err*) -> row */
+#define EDB_COLVAL      0x003dde5cUL  /* edb_dyn_GetColumnValueInternal(row, col) -> value* */
+#define EDB_CLOSE       0x003ddb24UL  /* edb_dyn_CloseRowSet(rowset) */
+#define EDB_INSERT      0x003dcd60UL  /* edb_dyn_Insert(table, ncols, value*[]) -> 0 */
+#define EDB_DELETE      0x003dcf10UL  /* edb_dyn_Delete(table, index, 0, 0, op, n, vals) -> 0 */
+#define EDB_AUTOCOMMIT  0x003de054UL  /* edb_dyn_SetAutoCommitState(on) */
+#define EDB_COMMIT      0x003ddf34UL  /* edb_dyn_CommitTransaction() */
+#define EDB_ROLLBACK    0x003ddfc4UL  /* edb_dyn_RollbackTransaction() */
+#define MYTAG_TABLE     ((const char *)0x00514860UL)   /* "djdbexSongMyTag": columns MyTagID, ContentID */
+#define MYTAG_BY_CONTENT ((const char *)0x00514888UL)  /* "idxExtSongMyTagContentID" */
+#define EDB_OP_EQ       ((const char *)0x0043f09cUL)   /* "=" */
+#define TAG_FILE_NOW    "/media/usb1/sda1/PIONEER/rekordbox/exportExt.pdb"
+
+static unsigned g_track[2];   /* each deck's track in this run, set by track_id_poll */
+
+/* edb_dyn_* work on the calling thread's database, and only rbp's database threads have one: elsewhere
+ * TEGetCurrentDB returns NULL and the call faults.  Check before every use. */
+#define EDB_CURRENT_DB  0x003f2a68UL  /* TEGetCurrentDB() */
+static int edb_usable(void)
+{
+     return ((void *(*)(void))EDB_CURRENT_DB)() != NULL;
+}
+
+/* The tag ids of a track, or -1 when the query fails. */
+static int mytags_of(unsigned track, unsigned *ids, int max)
+{
+     int err = 0, n = 0;
+     if (!edb_usable())
+          return -1;
+     unsigned key = track;
+     void *vals[1] = { &key }, *rs, *row;
+     rs = ((void *(*)(int *, const char *, const char *, int, int, int, const char *, int, void **))EDB_SELECT)
+          (&err, MYTAG_TABLE, MYTAG_BY_CONTENT, 0, 0, 0, EDB_OP_EQ, 1, vals);
+     if (!rs)
+          return err ? -1 : 0;
+     while ((row = ((void *(*)(void *, int *))EDB_NEXTROW)(rs, &err)) != NULL && !err) {
+          unsigned *v = ((unsigned *(*)(void *, int))EDB_COLVAL)(row, 0);
+          if (v && n < max)
+               ids[n++] = *v;
+     }
+     ((void (*)(void *))EDB_CLOSE)(rs);
+     return err ? -1 : n;
+}
+
+/* One copy of the tag file before the first edit of a run, in /mytags-backup of the chroot (/data/rbx3-run). */
+static void mytags_backup(void)
+{
+     static int done;
+     char buf[8192];
+     int in, out, n;
+     if (done)
+          return;
+     done = 1;
+     mkdir("/mytags-backup", 0755);
+     in = open(TAG_FILE_NOW, O_RDONLY);
+     out = open("/mytags-backup/exportExt-run.pdb", O_WRONLY | O_CREAT | O_TRUNC, 0644);
+     while (in >= 0 && out >= 0 && (n = (int)read(in, buf, sizeof(buf))) > 0)
+          if (write(out, buf, n) != n)
+               break;
+     if (in >= 0)
+          close(in);
+     if (out >= 0)
+          close(out);
+}
+
+/* Make the track's My Tags exactly ids[0..n): 0 on success. */
+static int mytags_set(unsigned track, const unsigned *ids, int n)
+{
+     int i, err = 0, bad = 0;
+     unsigned key = track;
+     void *vals[1] = { &key };
+     if (!edb_usable())
+          return 1;
+     mytags_backup();
+     ((void (*)(int))EDB_AUTOCOMMIT)(0);
+     if (((int (*)(const char *, const char *, int, int, const char *, int, void **))EDB_DELETE)
+         (MYTAG_TABLE, MYTAG_BY_CONTENT, 0, 0, EDB_OP_EQ, 1, vals))
+          bad = 1;
+     for (i = 0; i < n && !bad; i++) {
+          /* The table has four columns: MyTagID (BIT32), ContentID (INT32), a BIT32 that is always 0, and an
+           * NVARCHAR that is always empty (a string column is passed as the string's own address). */
+          unsigned tag = ids[i], zero = 0;
+          static const unsigned char empty[8];
+          void *cols[4] = { &tag, &key, &zero, (void *)empty };
+          bad = ((int (*)(const char *, int, void **))EDB_INSERT)(MYTAG_TABLE, 4, cols) != 0;
+     }
+     if (bad)
+          ((void (*)(void))EDB_ROLLBACK)();
+     else
+          ((void (*)(void))EDB_COMMIT)();
+     ((void (*)(int))EDB_AUTOCOMMIT)(1);
+     (void)err;
+     return bad;
+}
+
+/* Refresh the tags the overlay shows for the loaded track, and do a requested edit.  Runs on rbp's database task. */
+static void mytags_service(unsigned track, int refresh)
+{
+     unsigned ids[64];
+     int n, i, same;
+     if (!jog_ov)
+          return;
+     if (jog_ov->tag_req_seq != jog_ov->tag_ack_seq) {
+          unsigned t = jog_ov->tag_req_track, tag = jog_ov->tag_req_tag, on = jog_ov->tag_req_on;
+          unsigned seq = jog_ov->tag_req_seq, out[64];
+          int m = t && (t == g_track[0] || t == g_track[1]) ? mytags_of(t, ids, 64) : -1, bad = 1;
+          if (m >= 0) {
+               int k, j = 0, had = 0;
+               for (k = 0; k < m; k++)
+                    if (ids[k] == tag)
+                         had = 1;
+                    else if (j < 64)
+                         out[j++] = ids[k];
+               if (on && j < 64)
+                    out[j++] = tag;
+               bad = (had == (int)on) ? 0 : mytags_set(t, out, j);   /* already as asked: nothing to do */
+          }
+          klog("knobshim2: My Tag %s track %u tag %x: %s\n", on ? "add" : "remove", t, tag, bad ? "FAILED" : "ok");
+          jog_ov->tag_ack_err = bad;
+          jog_ov->tag_ack_seq = seq;
+          refresh = 1;
+          track = t ? t : track;
+     }
+     if (!refresh || !track)
+          return;
+     n = mytags_of(track, ids, 64);
+     if (n < 0) {                   /* not readable from this thread: the overlay falls back to the stick's file */
+          if (jog_ov->info_tags_track) {
+               jog_ov->info_tags_n = 0;
+               jog_ov->info_tags_track = 0;
+               jog_ov->info_tags_ver++;
+          }
+          return;
+     }
+     same = jog_ov->info_tags_track == track && jog_ov->info_tags_n == (unsigned)n;
+     for (i = 0; same && i < n; i++)
+          same = jog_ov->info_tags[i] == ids[i];
+     if (same)                      /* the overlay repaints on every change, so only report real ones */
+          return;
+     for (i = 0; i < n; i++)
+          jog_ov->info_tags[i] = ids[i];
+     jog_ov->info_tags_n = (unsigned)n;
+     jog_ov->info_tags_track = track;
+     jog_ov->info_tags_ver++;
+}
+
+/* The overlay's My Tags view needs the rekordbox id of each deck's track; ask rbp twice a second.  The ids are
+ * also kept here: /tmp/rb-overlay outlives rbp, and rbp's database is not up until a track has loaded, so a
+ * stale id from the last run must never reach the edb_* calls. */
 static void track_id_poll(int deck, unsigned cfg)
 {
      static unsigned n[2];
@@ -3154,12 +3308,13 @@ static void track_id_poll(int deck, unsigned cfg)
      if (!jog_ov || (n[deck]++ & 31))
           return;
      if (cfg & INFO_NOTAGS) {
-          jog_ov->info_track[deck] = 0;
+          g_track[deck] = jog_ov->info_track[deck] = 0;
           return;
      }
      memset(id, 0, sizeof(id));
      ((void (*)(int, unsigned char *))ADDR_MUSIC_ID)(deck, id);
-     jog_ov->info_track[deck] = id[1] <= 5 && rd_u32(id + 4) && rd_u32(id + 4) != ~0u ? rd_u32(id + 4) : 0;
+     g_track[deck] = id[1] <= 5 && rd_u32(id + 4) && rd_u32(id + 4) != ~0u ? rd_u32(id + 4) : 0;
+     jog_ov->info_track[deck] = g_track[deck];
 }
 
 /* The overlay names the BEATS unit only while this runs, i.e. on the player screen. */
@@ -3177,6 +3332,29 @@ static void deck_clear_hook(void)
      g_deck_clear();
 }
 
+/* rbp's database task (DBSMain_TASK) waits for its next message with trcv_mbx, at least every 500 ms and between
+ * database operations.  That is the one place with a current database and nothing in flight, so the My Tag
+ * work runs there: a hook on trcv_mbx that acts only for calls from DBSMain_TASK. */
+#define ADDR_TRCV_MBX   0x0017e870UL
+#define DBSMAIN_LO      0x0014dcc4UL  /* DBSMain_TASK ... */
+#define DBSMAIN_HI      0x0014e878UL  /* ... up to DBSMain_GetMountMsg */
+static int (*g_trcv)(int, void *, int, int);
+
+static int trcv_hook(int id, void *msg, int tmo, int x)
+{
+     unsigned long lr = (unsigned long)__builtin_return_address(0);
+     if (lr >= DBSMAIN_LO && lr < DBSMAIN_HI && jog_ov && !(info_cfg() & INFO_NOTAGS)) {
+          static unsigned long long last;
+          unsigned long long now = now_ms();
+          unsigned track = g_track[0] ? g_track[0] : g_track[1];
+          if (track && (jog_ov->tag_req_seq != jog_ov->tag_ack_seq || now - last >= 500)) {
+               last = now;
+               mytags_service(track, 1);
+          }
+     }
+     return g_trcv(id, msg, tmo, x);
+}
+
 static void install_deck_panel(void)
 {
      if (!is_rbp_process())
@@ -3185,7 +3363,8 @@ static void install_deck_panel(void)
      g_countdown = hook_function(ADDR_COUNTDOWN, 0xe92d40f8u, 0xe0801080u, countdown_hook);
      g_deck_set = hook_function(ADDR_DECK_SET, 0xe92d4038u, 0xe3a01ff9u, deck_set_hook);
      g_deck_clear = hook_function(ADDR_DECK_CLEAR, 0xe92d4008u, 0xe3a00001u, deck_clear_hook);
-     if (!g_deck_update || !g_countdown || !g_deck_set || !g_deck_clear)
+     g_trcv = hook_function(ADDR_TRCV_MBX, 0xe2403001u, 0xe353002fu, trcv_hook);
+     if (!g_deck_update || !g_countdown || !g_deck_set || !g_deck_clear || !g_trcv)
           klog("knobshim2: deck panel: unexpected code, some changes are off\n");
 }
 

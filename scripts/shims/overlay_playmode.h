@@ -38,6 +38,13 @@ struct rb_overlay_shm {
     volatile unsigned deck_ms;
     /* The rekordbox track id of what each deck has loaded, 0 = none (written by knobshim2 for the My Tags view). */
     volatile unsigned info_track[2];
+    /* The My Tags the loaded track has, from rbp's own database (knobshim2 refreshes it twice a second and after
+     * each edit): ids in info_tags[0 .. info_tags_n), for track info_tags_track; info_tags_ver changes with it. */
+    volatile unsigned info_tags_ver, info_tags_track, info_tags_n;
+    volatile unsigned info_tags[64];
+    /* A tag edit asked for by the overlay: tag_req_on 1 = add, 0 = remove; knobshim2 answers by setting
+     * tag_ack_seq = tag_req_seq, with tag_ack_err nonzero when it failed. */
+    volatile unsigned tag_req_track, tag_req_tag, tag_req_on, tag_req_seq, tag_ack_seq, tag_ack_err;
 };
 
 #define INFO_SET   0x80000000u   /* set once the MOD INFO row has been used */
