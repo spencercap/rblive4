@@ -44,6 +44,7 @@ struct rb_overlay_shm {
 #define INFO_CNT   4u
 #define INFO_LOOP  8u
 #define INFO_BEATS 16u           /* the count is in beats, not bars */
+#define INFO_OFF   32u           /* leave the boxes to rbp: source shown, Bars counts to memory cues */
 #define INFO_DEF   (INFO_KEY | INFO_CNT | INFO_LOOP)
 
 #define LINK_ON  1

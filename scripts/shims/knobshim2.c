@@ -2897,13 +2897,16 @@ static void install_preview_fixes(void)
 #define ADDR_OBJ_REFRESH    0x0018e1a0UL  /* ui_com_draw_RefreshObject(handle, index) */
 #define ADDR_DECK_SET       0x002920ccUL  /* ui_CTRL_DECK_Set(): every tick of the player screen, never on Browse */
 #define ADDR_DECK_HANDLE    0x02683fb0UL  /* the draw handle ui_Deck_Update passes to those */
+#define ADDR_CUE_RENEW      0x0018554cUL  /* CmnFunc_CmnInfo_CountDownCueNumRenew_Req(deck) */
+#define INFO_ROWS           (INFO_SRC | INFO_KEY | INFO_CNT | INFO_LOOP)
 #define CUE_BEATS(d)        ((unsigned *)(0x0322ab70UL + (d) * 0x12fd8UL + 0x10ef4UL))
 
 static unsigned (*g_countdown)(int);
 static void (*g_deck_update)(int);
 static void (*g_deck_set)(void);
 
-/* The MOD INFO row's choice: bits INFO_SRC.. = rows shown, INFO_BEATS = count in beats. */
+/* The MOD INFO, ROWS and COUNT rows: INFO_OFF = leave the boxes to rbp, bits INFO_SRC.. = rows shown,
+ * INFO_BEATS = count in beats. */
 static unsigned info_cfg(void)
 {
      unsigned c;
@@ -2918,11 +2921,23 @@ static unsigned info_cfg(void)
  * rbp draws the value as bars.beats from the beat count; BEATS shows "NN" by passing four times the count. */
 static unsigned countdown_hook(int deck)
 {
-     unsigned *a = CUE_BEATS(deck), b[8], v;
+     static unsigned char was_off[2];
+     unsigned *a = CUE_BEATS(deck), b[8], v, cfg;
      int i, j, n = 0, t;
      if (!g_countdown)                  /* rbp calls this every frame; the hook is live just before this is set */
           return 511;                   /* rbp's "no count" (--.-) */
      if ((unsigned)deck > 1)
+          return g_countdown(deck);
+     cfg = info_cfg();
+     if (cfg & INFO_OFF) {              /* rbp's own count: ask it once to refill its memory cue list */
+          if (!was_off[deck]) {
+               was_off[deck] = 1;
+               ((void (*)(int))ADDR_CUE_RENEW)(deck);
+          }
+          return g_countdown(deck);
+     }
+     was_off[deck] = 0;
+     if (!(cfg & INFO_CNT))             /* the row is hidden: nothing to count for */
           return g_countdown(deck);
      for (i = 0; i < 8; i++) {
           t = ((int (*)(int, int))ADDR_HOTCUE_IN)(deck, i);
@@ -2935,7 +2950,7 @@ static unsigned countdown_hook(int deck)
      for (i = 0; i < 10; i++)
           a[i] = i < n ? b[i] : ~0u;
      v = g_countdown(deck);
-     if (info_cfg() & INFO_BEATS)
+     if (cfg & INFO_BEATS)
           return v < 100 ? v * 4 : 511;
      return v;
 }
@@ -2958,18 +2973,18 @@ static void deck_obj_show(void *h, int id)
      }
 }
 
+/* Only the flag: the row's background was redrawn when it was turned off, and rbp redraws whatever it
+ * changes itself, so a hidden object costs no drawing. */
 static void deck_obj_hide(void *h, int id)
 {
      void *o = ((void *(*)(void *, int))ADDR_OBJ_BY_ID)(h, id);
-     void **vt = o ? *(void ***)o : NULL;
-     if (vt) {
-          ((void (*)(void *, int))ADDR_OBJ_REFRESH)(h, id);
-          ((void (*)(void *, int))vt[5])(o, 0);
-     }
+     if (o)
+          ((void (*)(void *, int))(*(void ***)o)[5])(o, 0);
 }
 
-/* rbp shows what it wants in ui_Deck_Update; hide what the MOD INFO row turned off right after, on the same
- * (UI) thread and before the next paint.  It runs about 60 times a second per deck. */
+/* rbp shows what it wants in ui_Deck_Update; hide what the MOD ROWS row turned off right after, on the same
+ * (UI) thread and before the next paint.  It runs about 60 times a second per deck; with every row shown
+ * (or INFO OFF) that is one compare per row. */
 static void deck_update_hook(int deck)
 {
      static unsigned last_cfg[2] = { ~0u, ~0u };   /* the first call redraws everything */
@@ -2979,6 +2994,8 @@ static void deck_update_hook(int deck)
      g_deck_update(deck);
      if ((unsigned)deck > 1 || !h)
           return;
+     if (cfg & INFO_OFF)
+          cfg = INFO_ROWS;
      for (r = 0; r < 4; r++) {
           unsigned bit = INFO_SRC << r;
           if (((cfg ^ last_cfg[deck]) & bit) == 0)
@@ -2993,15 +3010,15 @@ static void deck_update_hook(int deck)
      }
      last_cfg[deck] = cfg;
      for (r = 0; r < 4; r++)
-          for (i = 0; deck_row[r][i]; i++)
-               if (!(cfg & (INFO_SRC << r)))
+          if (!(cfg & (INFO_SRC << r)))
+               for (i = 0; deck_row[r][i]; i++)
                     deck_obj_hide(h, deck_row[r][i] + 39 * deck);
 }
 
 /* The overlay names the BEATS unit only while this runs, i.e. on the player screen. */
 static void deck_set_hook(void)
 {
-     if ((info_cfg() & INFO_BEATS) && jog_ov)
+     if ((info_cfg() & (INFO_OFF | INFO_CNT | INFO_BEATS)) == (INFO_CNT | INFO_BEATS) && jog_ov)
           jog_ov->deck_ms = (unsigned)now_ms();
      g_deck_set();
 }

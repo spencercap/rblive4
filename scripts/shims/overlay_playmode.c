@@ -11,8 +11,9 @@
  * and display frames per second, counted at each FBIOPAN), LINK (ON, OFF:
  * LINK CUE, which lets Track Preview play into the headphones), TCUE (ON, OFF:
  * Touch Cue on the deck overview waveforms while a deck plays), SKIP (SEARCH, 16 BEATS:
- * what the SEARCH < > buttons do, applied by knobshim), INFO (SRC, KEY, CUE, LOOP: which rows of the
- * two deck info boxes are shown, applied by knobshim), COUNT (BARS, BEATS: the unit of the CUE row), and POWER.
+ * what the SEARCH < > buttons do, applied by knobshim), INFO (OFF, ON: OFF leaves the two deck info boxes
+ * to rbp), ROWS (SRC, KEY, CUE, LOOP: which rows of those boxes are shown, applied by knobshim), COUNT (BARS,
+ * BEATS: the unit of the CUE row), and POWER.
  * POWER always stays the last row.
  * The MODE button cycles those four play modes. EJECT asks usb-watch to
  * release the stick; the button then reads PULL until the stick is removed.
@@ -103,10 +104,13 @@
 #define TAB_X ((1280 - TAB_W) / 2)
 #define TAB_Y 8
 
-/* Name on the left, value on the right. Sixteen rows under the MOD tab:
- * PAN_H = 2 * PAD + rows * ROW_H + (rows - 1) * ROW_GAP. */
+/* Name on the left, value on the right. Seventeen rows under the MOD tab:
+ * PAN_H = 2 * PAD + rows * ROW_H + (rows - 1) * ROW_GAP. The panel shows PAN_VIS_H of that and scrolls
+ * (drag inside it) when PAN_H is taller. */
 #define PAN_W 348
-#define PAN_H 716
+#define PAN_H 760
+#define PAN_VIS_H (PAN_H < 800 - PAN_Y - 4 ? PAN_H : 800 - PAN_Y - 4)
+#define SCROLL_MAX (PAN_H - PAN_VIS_H)
 #define PAN_X ((1280 - PAN_W) / 2)
 #define PAN_Y 48
 
@@ -117,7 +121,7 @@
 #define LAB_X (PAN_X + PAD)
 #define VAL_X (LAB_X + LAB_W)
 #define VAL_W (PAN_W - PAD - (VAL_X - PAN_X))
-#define ROW_Y(i) (PAN_Y + PAD + (i) * (ROW_H + ROW_GAP))
+#define ROW_Y(i) (PAN_Y + PAD + (i) * (ROW_H + ROW_GAP) - ov_scroll)
 
 #define MODE_Y ROW_Y(0)
 #define JOG_Y  ROW_Y(1)
@@ -149,11 +153,12 @@
 #define TCUE_Y ROW_Y(11)
 #define SKIP_Y ROW_Y(12)
 #define INFO_Y ROW_Y(13)
+#define ROWS_Y ROW_Y(14)
 #define INFO_GAP 6
 #define INFO_BTN ((VAL_W - 3 * INFO_GAP) / 4)
-#define CNT_Y  ROW_Y(14)
+#define CNT_Y  ROW_Y(15)
 /* POWER is always the last row; add new rows above it. */
-#define PWR_Y  ROW_Y(15)
+#define PWR_Y  ROW_Y(16)
 
 #define COL_TAB    0xff1c2128u
 #define COL_PANEL  0xff121418u
@@ -164,6 +169,9 @@
 #define COL_EDGE   0xff3a424cu
 
 #define SCALE 2
+
+static int ov_scroll;              /* panel scroll, 0..SCROLL_MAX px */
+static int clip_y0, clip_y1 = 800;  /* drawing is clipped to these rows while the panel paints */
 
 static struct rb_overlay_shm *ov_shm;
 static volatile int ov_mode;          /* 0 SINGLE, 1 CONTINUE, 2 REPEAT, 3 ALL REPEAT */
@@ -336,7 +344,7 @@ __attribute__((constructor)) static void overlay_shm_init(void)
     ov_shm->pan_x = PAN_X;
     ov_shm->pan_y = PAN_Y;
     ov_shm->pan_w = PAN_W;
-    ov_shm->pan_h = PAN_H;
+    ov_shm->pan_h = PAN_VIS_H;
     ov_shm->open = 0;
 }
 
@@ -350,7 +358,7 @@ static void put_visual(unsigned char *base, int vx, int vy, unsigned color)
     int px = vy;
     int py = 1279 - vx;
     unsigned char *p;
-    if (px < 0 || py < 0 || px >= 800 || py >= 1280)
+    if (px < clip_y0 || py < 0 || px >= clip_y1 || py >= 1280)
         return;
     p = base + (unsigned)py * fb_pitch + (unsigned)px * 4;
     *(unsigned *)p = color;
@@ -365,14 +373,14 @@ static void fill_visual(unsigned char *base, int x, int y, int w, int h, unsigne
         w += x;
         x = 0;
     }
-    if (y < 0) {
-        h += y;
-        y = 0;
+    if (y < clip_y0) {
+        h -= clip_y0 - y;
+        y = clip_y0;
     }
     if (x + w > 1280)
         w = 1280 - x;
-    if (y + h > 800)
-        h = 800 - y;
+    if (y + h > clip_y1)
+        h = clip_y1 - y;
     for (ix = 0; ix < w; ix++) {
         unsigned *p = (unsigned *)(base + (unsigned)(1279 - x - ix) * fb_pitch) + y;
         for (iy = 0; iy < h; iy++)
@@ -1468,7 +1476,7 @@ static void count_label_paint(unsigned char *base)
     if (!ov_shm)
         return;
     c = ov_shm->info_cfg;
-    if ((c & (INFO_SET | INFO_BEATS | INFO_CNT)) != (INFO_SET | INFO_BEATS | INFO_CNT) ||
+    if ((c & (INFO_SET | INFO_OFF | INFO_BEATS | INFO_CNT)) != (INFO_SET | INFO_BEATS | INFO_CNT) ||
         (unsigned)mono_ms() - ov_shm->deck_ms > 300)
         return;
     for (i = 0; i < 2; i++) {
@@ -1869,6 +1877,7 @@ void overlay_paint(int fb_fd, unsigned yoffset)
     hash = hash_bytes(hash, &ov_tcue, sizeof(ov_tcue));
     hash = hash_bytes(hash, &ov_skip, sizeof(ov_skip));
     hash = hash_bytes(hash, &ov_info, sizeof(ov_info));
+    hash = hash_bytes(hash, &ov_scroll, sizeof(ov_scroll));
     hash = hash_bytes(hash, &eject_arm, sizeof(eject_arm));
     hash = hash_bytes(hash, &pull1, sizeof(pull1));
     hash = hash_bytes(hash, &pull2, sizeof(pull2));
@@ -1887,8 +1896,13 @@ void overlay_paint(int fb_fd, unsigned yoffset)
         return;
     }
 
-    fill_visual(base, PAN_X, PAN_Y, PAN_W, PAN_H, COL_EDGE);
-    fill_visual(base, PAN_X + 2, PAN_Y + 2, PAN_W - 4, PAN_H - 4, COL_PANEL);
+    fill_visual(base, PAN_X, PAN_Y, PAN_W, PAN_VIS_H, COL_EDGE);
+    fill_visual(base, PAN_X + 2, PAN_Y + 2, PAN_W - 4, PAN_VIS_H - 4, COL_PANEL);
+    if (SCROLL_MAX > 0)                  /* where the view sits in the whole list */
+        fill_visual(base, PAN_X + PAN_W - 5, PAN_Y + 2 + ov_scroll * (PAN_VIS_H - 4) / PAN_H, 3,
+                    (PAN_VIS_H - 4) * PAN_VIS_H / PAN_H, COL_TITLE);
+    clip_y0 = PAN_Y + 2;
+    clip_y1 = PAN_Y + PAN_VIS_H - 2;
 
     draw_label(base, MODE_Y, "MODE");
     fill_visual(base, VAL_X, MODE_Y, VAL_W, ROW_H, COL_ON);
@@ -1961,11 +1975,16 @@ void overlay_paint(int fb_fd, unsigned yoffset)
     draw_text_centered(base, QUANT_OFF_X, TCUE_Y, QUANT_HALF, ROW_H, "OFF", COL_TEXT);
 
     draw_label(base, INFO_Y, "INFO");
+    fill_visual(base, QUANT_ON_X, INFO_Y, QUANT_HALF, ROW_H, ov_info & INFO_OFF ? COL_ON : COL_BTN);
+    draw_text_centered(base, QUANT_ON_X, INFO_Y, QUANT_HALF, ROW_H, "OFF", COL_TEXT);
+    fill_visual(base, QUANT_OFF_X, INFO_Y, QUANT_HALF, ROW_H, !(ov_info & INFO_OFF) ? COL_ON : COL_BTN);
+    draw_text_centered(base, QUANT_OFF_X, INFO_Y, QUANT_HALF, ROW_H, "ON", COL_TEXT);
+    draw_label(base, ROWS_Y, "ROWS");
     for (i = 0; i < 4; i++) {
         static const char *info_name[4] = {"SRC", "KEY", "CUE", "LOOP"};
         int x = VAL_X + i * (INFO_BTN + INFO_GAP);
-        fill_visual(base, x, INFO_Y, INFO_BTN, ROW_H, ov_info & (INFO_SRC << i) ? COL_ON : COL_BTN);
-        draw_text_centered(base, x, INFO_Y, INFO_BTN, ROW_H, info_name[i], COL_TEXT);
+        fill_visual(base, x, ROWS_Y, INFO_BTN, ROW_H, ov_info & (INFO_SRC << i) ? COL_ON : COL_BTN);
+        draw_text_centered(base, x, ROWS_Y, INFO_BTN, ROW_H, info_name[i], COL_TEXT);
     }
     draw_label(base, CNT_Y, "COUNT");
     fill_visual(base, QUANT_ON_X, CNT_Y, QUANT_HALF, ROW_H, !(ov_info & INFO_BEATS) ? COL_ON : COL_BTN);
@@ -2039,6 +2058,8 @@ void overlay_paint(int fb_fd, unsigned yoffset)
     }
     fill_visual(base, VAL_X, STATS_Y, VAL_W, ROW_H, COL_BTN);
     draw_text_centered(base, VAL_X, STATS_Y, VAL_W, ROW_H, label, COL_TEXT);
+    clip_y0 = 0;
+    clip_y1 = 800;
     last_hash[page] = hash;
     hash_valid[page] = 1;
 }
@@ -2051,7 +2072,9 @@ int overlay_touch(int down, int was_down, int lx, int ly)
     int on_usb1, on_usb2, on_blue, on_rgb, on_band, on_quant_on, on_quant_off, on_power;
     int on_tag, on_tags, on_find, on_link_on, on_link_off, on_tcue_on, on_tcue_off, on_skip_srch, on_skip_beats;
     int on_beat_off, on_beat_bars, on_beat_drift;
-    int on_scr_dn, on_scr_up, on_led_dn, on_led_up, on_cnt_bars, on_cnt_beats, info_hit = -1;
+    int on_scr_dn, on_scr_up, on_led_dn, on_led_up, on_cnt_bars, on_cnt_beats, on_info_off, on_info_on;
+    int info_hit = -1;
+    static int press_x, press_y, press_scroll, pressed, dragging;
     int fresh;
     unsigned long long now;
     static unsigned long long last_ev_ms;
@@ -2067,9 +2090,40 @@ int overlay_touch(int down, int was_down, int lx, int ly)
         fresh = 1;
     last_ev_ms = now;
 
+    /* A scrolling panel acts on release: a finger that moves first scrolls it instead. */
+    if (SCROLL_MAX > 0 && ov_is_open()) {
+        if (fresh && in_rect(vx, vy, PAN_X, PAN_Y, PAN_W, PAN_VIS_H)) {
+            pressed = 1;
+            dragging = 0;
+            press_x = vx;
+            press_y = vy;
+            press_scroll = ov_scroll;
+            ov_grab = 1;
+            return 1;
+        }
+        if (pressed) {
+            if (down) {
+                int sc = press_scroll - (vy - press_y);
+                if (dragging || vy - press_y > 8 || press_y - vy > 8) {
+                    dragging = 1;
+                    ov_scroll = sc < 0 ? 0 : sc > SCROLL_MAX ? SCROLL_MAX : sc;
+                }
+                return 1;
+            }
+            pressed = 0;
+            if (dragging) {
+                ov_grab = 0;
+                return 1;
+            }
+            vx = press_x;
+            vy = press_y;
+            fresh = 1;
+        }
+    }
+
     if (fresh) {
         on_tab = in_rect(vx, vy, TAB_X, TAB_Y, TAB_W, TAB_H);
-        on_panel = in_rect(vx, vy, PAN_X, PAN_Y, PAN_W, PAN_H);
+        on_panel = in_rect(vx, vy, PAN_X, PAN_Y, PAN_W, PAN_VIS_H);
         on_mode = in_rect(vx, vy, VAL_X, MODE_Y, VAL_W, ROW_H);
         on_jog_dn = in_rect(vx, vy, STEP_DN_X, JOG_Y, STEP_W, ROW_H);
         on_jog_up = in_rect(vx, vy, STEP_UP_X, JOG_Y, STEP_W, ROW_H);
@@ -2089,8 +2143,10 @@ int overlay_touch(int down, int was_down, int lx, int ly)
         on_skip_beats = in_rect(vx, vy, QUANT_OFF_X, SKIP_Y, QUANT_HALF, ROW_H);
         on_cnt_bars = in_rect(vx, vy, QUANT_ON_X, CNT_Y, QUANT_HALF, ROW_H);
         on_cnt_beats = in_rect(vx, vy, QUANT_OFF_X, CNT_Y, QUANT_HALF, ROW_H);
+        on_info_off = in_rect(vx, vy, QUANT_ON_X, INFO_Y, QUANT_HALF, ROW_H);
+        on_info_on = in_rect(vx, vy, QUANT_OFF_X, INFO_Y, QUANT_HALF, ROW_H);
         for (info_hit = 3; info_hit >= 0; info_hit--)
-            if (in_rect(vx, vy, VAL_X + info_hit * (INFO_BTN + INFO_GAP), INFO_Y, INFO_BTN, ROW_H))
+            if (in_rect(vx, vy, VAL_X + info_hit * (INFO_BTN + INFO_GAP), ROWS_Y, INFO_BTN, ROW_H))
                 break;
         on_tag = in_rect(vx, vy, WAVE_X, TRACK_Y, WAVE_BTN, ROW_H);
         on_tags = in_rect(vx, vy, WAVE_X + (WAVE_BTN + WAVE_GAP), TRACK_Y, WAVE_BTN, ROW_H);
@@ -2168,6 +2224,10 @@ int overlay_touch(int down, int was_down, int lx, int ly)
                 request_skip(0);
             else if (on_skip_beats)
                 request_skip(1);
+            else if (on_info_off && !(ov_info & INFO_OFF))
+                request_info(INFO_OFF);
+            else if (on_info_on && (ov_info & INFO_OFF))
+                request_info(INFO_OFF);
             else if (info_hit >= 0)
                 request_info(INFO_SRC << info_hit);
             else if (on_cnt_bars && (ov_info & INFO_BEATS))

@@ -31,7 +31,7 @@ master-cue function instead (see below).
 
 ## MOD menu
 
-A **MOD** tab at the top center of the screen opens this panel. Taps on the tab and the panel stay in the overlay. Tapping outside it closes the panel. Green marks the current play mode, waveform color, and quantize state.
+A **MOD** tab at the top center of the screen opens this panel. It is taller than the screen, so drag inside it to scroll (a thin bar on its right edge shows where you are); a button acts when the finger lifts, unless the finger moved. Taps on the tab and the panel stay in the overlay. Tapping outside it closes the panel. Green marks the current play mode, waveform color, and quantize state.
 
 ![MOD menu](mod-menu.png)
 
@@ -50,8 +50,9 @@ A **MOD** tab at the top center of the screen opens this panel. Taps on the tab 
 | **LINK** | **ON** (default) or **OFF**. This is the RX3's LINK CUE button for Track Preview: while ON, touching a track's mini waveform in the browse list plays it from that point into the headphones. The overlay re-applies it about once a second because rbp resets it at startup. Kept in `/tmp/rb-overlay`. | LINK CUE (`0x4408`), `MixerEngine::setPreviewChHeadphoneCue` |
 | **TCUE** | **ON** (default) or **OFF**. Touch Cue on the deck overview waveforms, see [Touch Cue](#touch-cue). **OFF** removes the touch area completely: the touch handler returns on its first check and the overview is back to rbp's Needle Search. Kept in `/tmp/rb-overlay`. | No RX3 equivalent. CDJ-3000X Touch Cue. |
 | **SKIP** | What the deck **SEARCH < >** buttons do. **SEARCH** (default): rbp's scan, hold to search. **16 BEATS**: each press jumps the deck 16 beats back or forward, on the beat, like the RX3's 16-beat jump pad. Lasts until reboot. | SEARCH REV / FWD (`0x4120` / `0x411f`), or `DjEngineIF::playBeatJump` types 11 and 12 |
-| **INFO** | Which rows of the DECK 1 / DECK 2 info boxes left of the waveforms are shown: **SRC** (where the track came from, "USB1"; off by default), **KEY**, **CUE** (the Bars countdown), **LOOP** (loop size). Green = shown. A hidden row stays an empty strip. Lasts until reboot. See [06](06-display.md#deck-info-panel). | No RX3 equivalent. |
-| **COUNT** | The unit of the **CUE** row: **BARS** (default, `bars.beats` such as `02.3`) or **BEATS** (a plain beat count up to 99, such as `11`, labelled "Beats"). Lasts until reboot. | No RX3 equivalent. |
+| **INFO** | **ON** (default) or **OFF**. **OFF** leaves the DECK 1 / DECK 2 info boxes left of the waveforms to rbp: the source row shows again and Bars counts to the next memory cue. The shim's hooks then return on their first check. See [06](06-display.md#deck-info-panel). | No RX3 equivalent. |
+| **ROWS** | With INFO **ON**: which rows of those boxes are shown: **SRC** (where the track came from, "USB1"; off by default), **KEY**, **CUE** (the countdown to the next hot cue), **LOOP** (loop size). Green = shown. A hidden row stays an empty strip. | No RX3 equivalent. |
+| **COUNT** | The unit of the **CUE** row: **BARS** (default, `bars.beats` such as `02.3`) or **BEATS** (a plain beat count up to 99, such as `11`, labelled BEATS). | No RX3 equivalent. |
 | **POWER** | Always the last row. The first tap shows **YES**. The **YES** tap ejects both sticks, then powers the unit off. Closing the panel before **YES** cancels it. | No RX3 key. The launcher handles the shutdown. |
 
 ### Track Preview

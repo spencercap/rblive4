@@ -162,9 +162,15 @@ Each of these cost at least one refresh per frame:
 ## Deck info panel
 
 The two boxes left of the waveforms (DECK 1 and DECK 2) have four rows: the source, the key, a **Bars**
-countdown, and the loop size. The MOD menu's **INFO** row turns each row on or off (the source row is off by
-default), and **COUNT** picks bars or beats for the countdown ([08](08-controls.md#mod-menu)). Both are
-`info_cfg` in `/tmp/rb-overlay`, read by `knobshim2`.
+countdown, and the loop size. The MOD menu's **INFO** row switches all of this off (rbp's own boxes), **ROWS**
+turns each row on or off (the source row is off by default), and **COUNT** picks bars or beats for the
+countdown ([08](08-controls.md#mod-menu)). All three are `info_cfg` in `/tmp/rb-overlay`, read by `knobshim2`.
+
+Cost: with INFO **OFF**, every hook returns on its first check, and the memory cue list is handed back once
+(`CmnFunc_CmnInfo_CountDownCueNumRenew_Req`). With **ON**, a shown row costs one compare per tick, and a hidden
+row costs one flag write per object per tick: its background is redrawn once when it is turned off, so no
+drawing is requested each tick. Hot cues are not looked up while the CUE row is hidden. Measured on
+2026-10-09 with a track loaded, every setting held 60 fps with rbp at 1.17–1.19 cores (noise level).
 
 * **Hiding a row.** `ui_Deck_Update(deck)` (`0x28fa1c`), about 60 times a second per deck, sets what each row
   shows. A hook runs it, then hides the row's objects (`GetObjectByID`, `setVisible(0)`) on rbp's own thread
