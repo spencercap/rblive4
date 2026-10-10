@@ -5,11 +5,14 @@
  * last export. This makes the tags of every track that is in both libraries equal to the player's, matching tracks
  * by file path (the two libraries number their tracks differently).
  *
- *   mytags-onelib [-n] [-k KEYFILE] [-b BACKUPDIR] DIR
+ *   mytags-onelib [-n] [-k KEYFILE] [-b BACKUPDIR] [-m ID] DIR
  *
  *   DIR      the stick's PIONEER/rekordbox folder (export.pdb, exportExt.pdb, exportLibrary.db)
  *   -k FILE  the database key, first line of FILE (default /data/onelibrary.key)
  *   -b DIR   copy exportLibrary.db to DIR before the first change (kept, one file per day)
+ *   -m ID    also set the stick's My Tag master id (property.myTagMasterDBID) to ID. rekordbox imports and exports
+ *            My Tags only for a stick whose id is its own library's (djmdProperty.DBID in master.db), and says "synced
+ *            with another computer" otherwise. A one-off; a normal run leaves it alone.
  *   -n       only print what would change
  *
  * Exit 0 when the database matches or was updated, 1 on an error. Built with tools/build-sqlcipher/build.sh
@@ -298,10 +301,35 @@ static void show(sqlite3 *db, int add, uint64_t key)
     printf("%c %s  ->  %s (content %u)\n", add ? '+' : '-', name, title, content);
 }
 
+/* The first change of a day keeps the original: one copy per day, never overwritten. */
+static int backup_db(const char *path, const char *dir)
+{
+    char day[16], to[600];
+    time_t now = time(NULL);
+    strftime(day, sizeof day, "%Y%m%d", gmtime(&now));
+    mkdir(dir, 0755);
+    snprintf(to, sizeof to, "%s/exportLibrary-%s.db", dir, day);
+    if (access(to, F_OK) && copy_file(path, to)) {
+        fprintf(stderr, "cannot back up to %s: %s\n", to, strerror(errno));
+        return -1;
+    }
+    return 0;
+}
+
+static int integrity_ok(sqlite3 *db)
+{
+    sqlite3_stmt *s;
+    int ok = sqlite3_prepare_v2(db, "pragma integrity_check", -1, &s, NULL) == SQLITE_OK && sqlite3_step(s) == SQLITE_ROW &&
+             !strcmp((const char *)sqlite3_column_text(s, 0), "ok");
+    sqlite3_finalize(s);
+    return ok;
+}
+
 int main(int argc, char **argv)
 {
     const char *keyfile = "/data/onelibrary.key", *backup = NULL, *dir = NULL;
     int dry = 0, i;
+    long long mval = 0;
     char path[512], key[256] = "";
     struct pdb ext, exp;
     sqlite3 *db = NULL;
@@ -318,15 +346,17 @@ int main(int argc, char **argv)
             keyfile = argv[++i];
         else if (!strcmp(argv[i], "-b") && i + 1 < argc)
             backup = argv[++i];
+        else if (!strcmp(argv[i], "-m") && i + 1 < argc)
+            mval = atoll(argv[++i]);
         else if (argv[i][0] != '-')
             dir = argv[i];
         else {
-            fprintf(stderr, "usage: %s [-n] [-k KEYFILE] [-b BACKUPDIR] DIR\n", argv[0]);
+            fprintf(stderr, "usage: %s [-n] [-k KEYFILE] [-b BACKUPDIR] [-m ID] DIR\n", argv[0]);
             return 1;
         }
     }
     if (!dir) {
-        fprintf(stderr, "usage: %s [-n] [-k KEYFILE] [-b BACKUPDIR] DIR\n", argv[0]);
+        fprintf(stderr, "usage: %s [-n] [-k KEYFILE] [-b BACKUPDIR] [-m ID] DIR\n", argv[0]);
         return 1;
     }
     snprintf(path, sizeof path, "%s/exportLibrary.db", dir);
@@ -377,6 +407,33 @@ int main(int argc, char **argv)
         return 1;
     }
     sqlite3_finalize(s);
+
+    if (mval) {                                           /* the My Tag master id, a one-off */
+        sqlite3_int64 cur = 0;
+        if (sqlite3_prepare_v2(db, "select myTagMasterDBID from property", -1, &s, NULL) == SQLITE_OK &&
+            sqlite3_step(s) == SQLITE_ROW)
+            cur = sqlite3_column_int64(s, 0);
+        sqlite3_finalize(s);
+        if (cur == mval)
+            printf("My Tag master id is already %lld\n", mval);
+        else {
+            printf("My Tag master id: %lld -> %lld\n", (long long)cur, mval);
+            if (!dry) {
+                char sql[128];
+                if (backup && backup_db(path, backup))
+                    return 1;
+                snprintf(sql, sizeof sql, "update property set myTagMasterDBID=%lld", mval);
+                if (run(db, "begin") || run(db, sql) || run(db, "commit"))
+                    return 1;
+                if (!integrity_ok(db)) {
+                    fprintf(stderr, "integrity_check failed after the write; the original is in %s\n", backup ? backup : "(no backup)");
+                    return 1;
+                }
+                run(db, "pragma wal_checkpoint(truncate)");
+                printf("My Tag master id updated\n");
+            }
+        }
+    }
 
     /* which tags exist there */
     if (sqlite3_prepare_v2(db, "select myTag_id from myTag where attribute=0", -1, &s, NULL) != SQLITE_OK) {
@@ -454,17 +511,8 @@ int main(int argc, char **argv)
             sqlite3_close(db);
             return 0;
         }
-        if (backup) {
-            char day[16], to[600];
-            time_t now = time(NULL);
-            strftime(day, sizeof day, "%Y%m%d", gmtime(&now));
-            mkdir(backup, 0755);
-            snprintf(to, sizeof to, "%s/exportLibrary-%s.db", backup, day);
-            if (access(to, F_OK) && copy_file(path, to)) {   /* the first change of the day keeps the original */
-                fprintf(stderr, "cannot back up to %s: %s\n", to, strerror(errno));
-                return 1;
-            }
-        }
+        if (backup && backup_db(path, backup))
+            return 1;
         if (run(db, "begin"))
             return 1;
         for (a = 0; a < rem.n; a++) {
@@ -493,12 +541,10 @@ int main(int argc, char **argv)
         }
         if (run(db, "commit"))
             return 1;
-        if (sqlite3_prepare_v2(db, "pragma integrity_check", -1, &s, NULL) != SQLITE_OK || sqlite3_step(s) != SQLITE_ROW ||
-            strcmp((const char *)sqlite3_column_text(s, 0), "ok")) {
+        if (!integrity_ok(db)) {
             fprintf(stderr, "integrity_check failed after the write; the original is in %s\n", backup ? backup : "(no backup)");
             return 1;
         }
-        sqlite3_finalize(s);
         run(db, "pragma wal_checkpoint(truncate)");
         printf("exportLibrary.db updated: %zu added, %zu removed\n", add.n, rem.n);
     }
